@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import {
-  LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut,
+  LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut, Settings
 } from 'lucide-react'
 import { supabase } from '../../lib/supabase'
 
@@ -12,6 +12,7 @@ const menuItems = [
   { id: 'transaksi', label: 'Transaksi', icon: ShoppingCart },
   { id: 'pembelian', label: 'Pembelian', icon: PackageOpen },
   { id: 'laporan', label: 'Laporan', icon: BarChart2 },
+  { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
 ]
 
 export default function Dashboard() {
@@ -21,6 +22,21 @@ export default function Dashboard() {
   const [keranjang, setKeranjang] = useState<any[]>([])
   const [bayar, setBayar] = useState(0)
   const [prosesLoading, setProsesLoading] = useState(false)
+  const [settingsData, setSettingsData] = useState({
+  nama_apotek: '', alamat: '', nomor_ijin: '', nomor_telepon: ''
+})
+const [showStruk, setShowStruk] = useState(false)
+const [lastTrx, setLastTrx] = useState<any>(null)
+const [lastItems, setLastItems] = useState<any[]>([])
+
+useEffect(() => {
+  fetchSettings()
+}, [])
+
+const fetchSettings = async () => {
+  const { data } = await supabase.from('settings').select('*').single()
+  if (data) setSettingsData(data)
+}
   const [riwayat, setRiwayat] = useState<any[]>([])
   const [statProduk, setStatProduk] = useState(0)
 const [statTrxHariIni, setStatTrxHariIni] = useState(0)
@@ -111,6 +127,131 @@ const handleTambahProduk = async () => {
   }
 
   return (
+    <>
+    {showStruk && lastTrx && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+
+          {/* Struk Content */}
+          <div id="struk-print" className="p-6">
+            {/* Header Apotek */}
+            <div className="text-center mb-4 border-b border-dashed border-gray-300 pb-4">
+              <h2 className="font-bold text-lg text-[#1a2e2e]">{settingsData.nama_apotek}</h2>
+              <p className="text-xs text-gray-500 mt-1">{settingsData.alamat}</p>
+              <p className="text-xs text-gray-500">{settingsData.nomor_telepon}</p>
+              {settingsData.nomor_ijin && (
+                <p className="text-xs text-gray-400 mt-1">SIA: {settingsData.nomor_ijin}</p>
+              )}
+            </div>
+
+            {/* Info Transaksi */}
+            <div className="text-xs text-gray-500 mb-3 flex justify-between">
+              <span>{lastTrx.nomor_transaksi || lastTrx.id}</span>
+              <span>{new Date(lastTrx.created_at || Date.now()).toLocaleString('id-ID')}</span>
+            </div>
+
+            {/* Item List */}
+            <div className="border-t border-dashed border-gray-300 pt-3 space-y-1.5">
+              {lastItems.map((item, i) => (
+                <div key={i} className="text-xs">
+                  <div className="flex justify-between text-[#1a2e2e] font-medium">
+                    <span>{item.nama_obat}</span>
+                    <span>Rp {item.subtotal?.toLocaleString('id-ID')}</span>
+                  </div>
+                  <div className="text-gray-400">{item.jumlah} x Rp {item.harga_jual?.toLocaleString('id-ID')}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Total */}
+            <div className="border-t border-dashed border-gray-300 mt-3 pt-3 space-y-1 text-xs">
+              <div className="flex justify-between font-bold text-sm text-[#1a2e2e]">
+                <span>Total</span>
+                <span>Rp {lastTrx.total?.toLocaleString('id-ID')}</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>Bayar</span>
+                <span>Rp {lastTrx.bayar?.toLocaleString('id-ID')}</span>
+              </div>
+              <div className="flex justify-between text-gray-500">
+                <span>Kembalian</span>
+                <span>Rp {lastTrx.kembalian?.toLocaleString('id-ID')}</span>
+              </div>
+            </div>
+
+            <p className="text-center text-xs text-gray-400 mt-4 border-t border-dashed border-gray-300 pt-3">
+              Terima kasih atas kunjungan Anda
+            </p>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-2 p-4 border-t border-gray-100">
+            <button
+              onClick={() => setShowStruk(false)}
+              className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition"
+            >
+              Tutup
+            </button>
+            <button
+              onClick={() => {
+  const win = window.open('', '_blank', 'width=350,height=600')
+  win?.document.write(`
+    <html>
+    <head>
+      <title>Struk - ${lastTrx?.nomor_transaksi}</title>
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Courier New', monospace; font-size: 12px; padding: 16px; width: 300px; }
+        .center { text-align: center; }
+        .bold { font-weight: bold; }
+        .divider { border-top: 1px dashed #999; margin: 8px 0; }
+        .row { display: flex; justify-content: space-between; margin: 2px 0; }
+        .small { font-size: 10px; color: #555; }
+        h2 { font-size: 13px; text-align: center; font-weight: bold; margin-bottom: 2px; }
+        p { text-align: center; font-size: 10px; color: #555; margin: 1px 0; }
+      </style>
+    </head>
+    <body>
+      <h2>${settingsData.nama_apotek}</h2>
+      <p>${settingsData.alamat}</p>
+      <p>SIA: ${settingsData.nomor_ijin}</p>
+      <p>Telp: ${settingsData.nomor_telepon}</p>
+      <div class="divider"></div>
+      <div class="row small"><span>No.</span><span>${lastTrx?.nomor_transaksi}</span></div>
+      <div class="row small"><span>Waktu</span><span>${new Date().toLocaleString('id-ID')}</span></div>
+      <div class="divider"></div>
+      ${lastItems.map(item => `
+        <div style="margin: 4px 0;">
+          <div class="bold" style="font-size:11px;">${item.nama_obat}</div>
+          <div class="row small">
+            <span>${item.jumlah} x Rp ${item.harga_jual?.toLocaleString('id-ID')}</span>
+            <span>Rp ${item.subtotal?.toLocaleString('id-ID')}</span>
+          </div>
+        </div>
+      `).join('')}
+      <div class="divider"></div>
+      <div class="row bold"><span>TOTAL</span><span>Rp ${lastTrx?.total?.toLocaleString('id-ID')}</span></div>
+      <div class="row small"><span>Bayar</span><span>Rp ${lastTrx?.bayar?.toLocaleString('id-ID')}</span></div>
+      <div class="row small" style="color:green;"><span>Kembalian</span><span>Rp ${lastTrx?.kembalian?.toLocaleString('id-ID')}</span></div>
+      <div class="divider"></div>
+      <p style="margin-top:8px;">Terima kasih atas kunjungan Anda</p>
+      <p>Semoga lekas sembuh</p>
+    </body>
+    </html>
+  `)
+  win?.document.close()
+  win?.print()
+}}
+              className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition"
+            >
+              Print Struk
+            </button>
+          </div>
+
+        </div>
+      </div>
+    )}
+
     <div className="min-h-screen bg-[#f5f2eb] flex">
 
       {/* Sidebar */}
@@ -513,9 +654,11 @@ for (const k of keranjang) {
     .eq('id', k.id)
 }
 
-    alert(`✅ Transaksi ${trx.nomor_transaksi} berhasil!\nTotal: Rp ${total.toLocaleString('id-ID')}\nKembalian: Rp ${kembalian.toLocaleString('id-ID')}`)
-    setKeranjang([])
-    setBayar(0)
+    setLastTrx({ ...trx, total, bayar, kembalian })
+setLastItems(keranjang.map(k => ({ ...k, subtotal: k.harga_jual * k.jumlah })))
+setShowStruk(true)
+setKeranjang([])
+setBayar(0)
     setProsesLoading(false)
   } catch(e) {
     alert('Terjadi kesalahan, coba lagi')
@@ -534,6 +677,63 @@ for (const k of keranjang) {
             Batal / Reset
           </button>
         </div>
+      </div>
+    </div>
+  </div>
+)}
+
+{activePage === 'pengaturan' && (
+  <div>
+    <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Pengaturan Apotek</h1>
+    <p className="text-[#6b7280] text-sm mb-6">Data apotek untuk struk dan laporan</p>
+
+    <div className="bg-white rounded-xl shadow-sm p-6 max-w-lg">
+      <div className="space-y-4">
+        <div>
+          <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nama Apotek</label>
+          <input
+            value={settingsData.nama_apotek}
+            onChange={e => setSettingsData({...settingsData, nama_apotek: e.target.value})}
+            className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]"
+          />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Alamat</label>
+          <textarea
+            value={settingsData.alamat}
+            onChange={e => setSettingsData({...settingsData, alamat: e.target.value})}
+            rows={3}
+            className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]"
+          />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor Ijin (SIA)</label>
+          <input
+            value={settingsData.nomor_ijin}
+            onChange={e => setSettingsData({...settingsData, nomor_ijin: e.target.value})}
+            className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]"
+          />
+        </div>
+        <div>
+          <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor Telepon</label>
+          <input
+            value={settingsData.nomor_telepon}
+            onChange={e => setSettingsData({...settingsData, nomor_telepon: e.target.value})}
+            className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]"
+          />
+        </div>
+        <button
+          onClick={async () => {
+            const { error } = await supabase
+              .from('settings')
+              .update(settingsData)
+              .eq('id', settingsData.id)
+            if (!error) alert('✅ Data apotek berhasil disimpan!')
+          }}
+          className="w-full bg-[#1a2e2e] text-[#e8e4d9] py-2.5 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition"
+        >
+          Simpan Perubahan
+        </button>
       </div>
     </div>
   </div>
@@ -614,5 +814,6 @@ for (const k of keranjang) {
 
       </div>
     </div>
+    </>
   )
 }
