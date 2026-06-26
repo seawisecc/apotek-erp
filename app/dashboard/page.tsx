@@ -18,6 +18,43 @@ export default function Dashboard() {
   const [activePage, setActivePage] = useState('dashboard')
   const [products, setProducts] = useState<any[]>([])
   const [search, setSearch] = useState('')
+  const [keranjang, setKeranjang] = useState<any[]>([])
+  const [bayar, setBayar] = useState(0)
+  const [riwayat, setRiwayat] = useState<any[]>([])
+  const [statProduk, setStatProduk] = useState(0)
+const [statTrxHariIni, setStatTrxHariIni] = useState(0)
+const [statOmzet, setStatOmzet] = useState(0)
+
+useEffect(() => {
+  if (activePage === 'dashboard') fetchStats()
+}, [activePage])
+
+const fetchStats = async () => {
+  const { count: produkCount } = await supabase
+    .from('products')
+    .select('*', { count: 'exact', head: true })
+  setStatProduk(produkCount || 0)
+
+  const today = new Date().toISOString().split('T')[0]
+  const { data: trxHariIni } = await supabase
+    .from('transactions')
+    .select('total')
+    .gte('created_at', today)
+  setStatTrxHariIni(trxHariIni?.length || 0)
+  setStatOmzet(trxHariIni?.reduce((a, b) => a + b.total, 0) || 0)
+}
+
+useEffect(() => {
+  if (activePage === 'laporan') fetchRiwayat()
+}, [activePage])
+
+const fetchRiwayat = async () => {
+  const { data } = await supabase
+    .from('transactions')
+    .select('*')
+    .order('created_at', { ascending: false })
+  setRiwayat(data || [])
+}
   const [loading, setLoading] = useState(false)
   const [showForm, setShowForm] = useState(false)
 const [form, setForm] = useState({
@@ -119,25 +156,25 @@ const handleTambahProduk = async () => {
       <div className="flex-1 p-8">
 
         {activePage === 'dashboard' && (
-          <div>
-            <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Dashboard</h1>
-            <p className="text-[#6b7280] text-sm mb-8">Ringkasan aktivitas apotek hari ini</p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white rounded-xl p-6 shadow-sm">
-                <p className="text-sm text-[#6b7280] mb-1">Total Produk</p>
-                <p className="text-3xl font-bold text-[#1a2e2e]">0</p>
-              </div>
-              <div className="bg-white rounded-xl p-6 shadow-sm">
-                <p className="text-sm text-[#6b7280] mb-1">Transaksi Hari Ini</p>
-                <p className="text-3xl font-bold text-[#1a2e2e]">0</p>
-              </div>
-              <div className="bg-white rounded-xl p-6 shadow-sm">
-                <p className="text-sm text-[#6b7280] mb-1">Stok Hampir Habis</p>
-                <p className="text-3xl font-bold text-red-500">0</p>
-              </div>
-            </div>
-          </div>
-        )}
+  <div>
+    <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Dashboard</h1>
+    <p className="text-[#6b7280] text-sm mb-8">Ringkasan aktivitas apotek hari ini</p>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <p className="text-sm text-[#6b7280] mb-1">Total Produk</p>
+        <p className="text-3xl font-bold text-[#1a2e2e]">{statProduk}</p>
+      </div>
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <p className="text-sm text-[#6b7280] mb-1">Transaksi Hari Ini</p>
+        <p className="text-3xl font-bold text-[#1a2e2e]">{statTrxHariIni}</p>
+      </div>
+      <div className="bg-white rounded-xl p-6 shadow-sm">
+        <p className="text-sm text-[#6b7280] mb-1">Omzet Hari Ini</p>
+        <p className="text-2xl font-bold text-[#1a2e2e]">Rp {statOmzet.toLocaleString('id-ID')}</p>
+      </div>
+    </div>
+  </div>
+)}
 
         {activePage === 'produk' && (
           <div>
@@ -299,11 +336,196 @@ const handleTambahProduk = async () => {
         )}
 
         {activePage === 'transaksi' && (
-          <div>
-            <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Transaksi</h1>
-            <p className="text-[#6b7280] text-sm">Halaman ini akan segera tersedia.</p>
+  <div>
+    <div className="flex items-center justify-between mb-6">
+      <div>
+        <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Kasir</h1>
+        <p className="text-[#6b7280] text-sm">Transaksi penjualan obat</p>
+      </div>
+    </div>
+
+    <div className="grid grid-cols-5 gap-6">
+      {/* Panel Kiri - Cari Obat */}
+      <div className="col-span-3 space-y-4">
+        <div className="bg-white rounded-xl shadow-sm p-4">
+          <input
+            type="text"
+            placeholder="Cari obat by nama, generik, atau kandungan..."
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value)
+              if (e.target.value.length > 1) fetchProducts()
+            }}
+            className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]"
+          />
+
+          {search && (
+            <div className="mt-3 space-y-1 max-h-64 overflow-y-auto">
+              {filteredProducts.map(p => (
+                <div
+                  key={p.id}
+                  onClick={() => {
+                    const exists = keranjang.find(k => k.id === p.id)
+                    if (exists) {
+                      setKeranjang(keranjang.map(k => k.id === p.id ? {...k, jumlah: k.jumlah + 1} : k))
+                    } else {
+                      setKeranjang([...keranjang, {...p, jumlah: 1}])
+                    }
+                    setSearch('')
+                  }}
+                  className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-[#f5f2eb] cursor-pointer"
+                >
+                  <div>
+                    <div className="text-sm font-medium text-[#1a2e2e]">{p.nama_obat}</div>
+                    <div className="text-xs text-[#9ca3af]">{p.nama_generik} · Stok: {p.stok_total}</div>
+                  </div>
+                  <div className="text-sm font-medium text-[#1a2e2e]">Rp {p.harga_jual?.toLocaleString('id-ID')}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Tabel Keranjang */}
+        <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#f0ede6]">
+                <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Produk</th>
+                <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Qty</th>
+                <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Harga</th>
+                <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Subtotal</th>
+                <th className="px-4 py-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {keranjang.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">
+                    Belum ada produk — cari obat di atas
+                  </td>
+                </tr>
+              ) : (
+                keranjang.map(item => (
+                  <tr key={item.id} className="border-b border-[#f0ede6]">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-[#1a2e2e]">{item.nama_obat}</div>
+                      <div className="text-xs text-[#9ca3af]">{item.kode}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-center gap-2">
+  <button onClick={() => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: Math.max(1, k.jumlah - 1)} : k))}
+    className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1a2e2e] font-bold text-xs">−</button>
+  <input
+    type="number"
+    min={1}
+    value={item.jumlah}
+    onChange={e => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: Math.max(1, +e.target.value)} : k))}
+    className="w-12 text-center text-sm border border-[#d1cdc4] rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]"
+  />
+  <button onClick={() => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: k.jumlah + 1} : k))}
+    className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1a2e2e] font-bold text-xs">+</button>
+</div>
+                    </td>
+                    <td className="px-4 py-3 text-right text-[#1a2e2e]">Rp {item.harga_jual?.toLocaleString('id-ID')}</td>
+                    <td className="px-4 py-3 text-right font-medium text-[#1a2e2e]">Rp {(item.harga_jual * item.jumlah)?.toLocaleString('id-ID')}</td>
+                    <td className="px-4 py-3 text-center">
+                      <button onClick={() => setKeranjang(keranjang.filter(k => k.id !== item.id))}
+                        className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Panel Kanan - Total & Bayar */}
+      <div className="col-span-2">
+        <div className="bg-white rounded-xl shadow-sm p-5">
+          <h3 className="font-semibold text-[#1a2e2e] mb-4">Ringkasan Transaksi</h3>
+
+          <div className="space-y-2 mb-4">
+            <div className="flex justify-between text-sm">
+              <span className="text-[#6b7280]">Total Item</span>
+              <span className="text-[#1a2e2e]">{keranjang.reduce((a, b) => a + b.jumlah, 0)} item</span>
+            </div>
+            <div className="flex justify-between text-sm font-semibold border-t border-[#f0ede6] pt-2">
+              <span className="text-[#1a2e2e]">Total</span>
+              <span className="text-[#1a2e2e]">Rp {keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0).toLocaleString('id-ID')}</span>
+            </div>
           </div>
-        )}
+
+          <div className="mb-3">
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Bayar (Rp)</label>
+            <input
+              type="number"
+              value={bayar}
+              onChange={e => setBayar(+e.target.value)}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]"
+              placeholder="0"
+            />
+          </div>
+
+          {bayar > 0 && (
+            <div className="flex justify-between text-sm font-semibold text-green-600 mb-4">
+              <span>Kembalian</span>
+              <span>Rp {Math.max(0, bayar - keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)).toLocaleString('id-ID')}</span>
+            </div>
+          )}
+
+          <button
+            onClick={async () => {
+  if (keranjang.length === 0) return alert('Keranjang kosong!')
+  const total = keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)
+  if (bayar < total) return alert('Pembayaran kurang!')
+  const kembalian = bayar - total
+
+  try {
+    const { data: trx, error: trxError } = await supabase
+      .from('transactions')
+      .insert([{ total, bayar, kembalian }])
+      .select()
+      .single()
+
+    if (trxError) { alert('Error: ' + trxError.message); return }
+
+    const items = keranjang.map(k => ({
+      transaction_id: trx.id,
+      product_id: k.id,
+      nama_obat: k.nama_obat,
+      harga_jual: k.harga_jual,
+      jumlah: k.jumlah,
+      subtotal: k.harga_jual * k.jumlah
+    }))
+
+    const { error: itemError } = await supabase.from('transaction_items').insert(items)
+    if (itemError) { alert('Error items: ' + itemError.message); return }
+
+    alert(`✅ Transaksi ${trx.nomor_transaksi} berhasil!\nTotal: Rp ${total.toLocaleString('id-ID')}\nKembalian: Rp ${kembalian.toLocaleString('id-ID')}`)
+    setKeranjang([])
+    setBayar(0)
+  } catch(e) {
+    alert('Terjadi kesalahan, coba lagi')
+  }
+}}
+            className="w-full bg-[#1a2e2e] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition"
+          >
+            Proses Transaksi
+          </button>
+
+          <button
+            onClick={() => { setKeranjang([]); setBayar(0) }}
+            className="w-full mt-2 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition"
+          >
+            Batal / Reset
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+)}
 
         {activePage === 'pembelian' && (
           <div>
@@ -313,11 +535,70 @@ const handleTambahProduk = async () => {
         )}
 
         {activePage === 'laporan' && (
-          <div>
-            <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Laporan</h1>
-            <p className="text-[#6b7280] text-sm">Halaman ini akan segera tersedia.</p>
-          </div>
-        )}
+  <div>
+    <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Riwayat Transaksi</h1>
+    <p className="text-[#6b7280] text-sm mb-6">Semua transaksi penjualan apotek</p>
+
+    <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-[#f0ede6]">
+            <th className="text-left px-4 py-3 text-[#6b7280] font-medium">No. Transaksi</th>
+            <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Waktu</th>
+            <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Total</th>
+            <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Bayar</th>
+            <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Kembalian</th>
+            <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {riwayat.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-4 py-8 text-center text-[#9ca3af]">
+                Belum ada transaksi
+              </td>
+            </tr>
+          ) : (
+            riwayat.map(trx => (
+              <tr key={trx.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                <td className="px-4 py-3 font-mono text-xs text-[#1a2e2e] font-medium">{trx.nomor_transaksi}</td>
+                <td className="px-4 py-3 text-[#6b7280]">
+                  {new Date(trx.created_at).toLocaleDateString('id-ID', {
+                    day: 'numeric', month: 'short', year: 'numeric',
+                    hour: '2-digit', minute: '2-digit'
+                  })}
+                </td>
+                <td className="px-4 py-3 text-right font-medium text-[#1a2e2e]">
+                  Rp {trx.total?.toLocaleString('id-ID')}
+                </td>
+                <td className="px-4 py-3 text-right text-[#6b7280]">
+                  Rp {trx.bayar?.toLocaleString('id-ID')}
+                </td>
+                <td className="px-4 py-3 text-right text-[#6b7280]">
+                  Rp {trx.kembalian?.toLocaleString('id-ID')}
+                </td>
+                <td className="px-4 py-3 text-center">
+                  <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                    {trx.status}
+                  </span>
+                </td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+
+    {riwayat.length > 0 && (
+      <div className="mt-4 bg-white rounded-xl shadow-sm p-4 flex justify-between items-center">
+        <span className="text-sm text-[#6b7280]">Total {riwayat.length} transaksi</span>
+        <span className="text-sm font-semibold text-[#1a2e2e]">
+          Total Omzet: Rp {riwayat.reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
+        </span>
+      </div>
+    )}
+  </div>
+)}
 
       </div>
     </div>
