@@ -19,6 +19,23 @@ export default function Dashboard() {
   const [products, setProducts] = useState<any[]>([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showForm, setShowForm] = useState(false)
+const [form, setForm] = useState({
+  nama_obat: '', nama_generik: '', kandungan: '',
+  kategori: 'bebas', satuan: 'Tablet', isi_kemasan: 1,
+  harga_beli: 0, harga_jual: 0, stok_total: 0, stok_minimum: 10
+})
+
+const handleTambahProduk = async () => {
+  const { error } = await supabase.from('products').insert([form])
+  if (!error) {
+    setShowForm(false)
+    setForm({ nama_obat: '', nama_generik: '', kandungan: '',
+      kategori: 'bebas', satuan: 'Tablet', isi_kemasan: 1,
+      harga_beli: 0, harga_jual: 0, stok_total: 0, stok_minimum: 10 })
+    fetchProducts()
+  }
+}
 
   useEffect(() => {
     if (activePage === 'produk') fetchProducts()
@@ -86,9 +103,15 @@ export default function Dashboard() {
         <div className="px-6 py-4 border-t border-[#2a4040]">
           <div className="text-[#7a9e9e] text-xs">Masuk sebagai</div>
           <div className="text-[#e8e4d9] text-sm font-medium mt-0.5">admin@apotek.com</div>
-          <button className="flex items-center gap-1.5 text-[#4a6e6e] text-xs mt-2 hover:text-[#e8e4d9] transition">
-            <LogOut size={12} /> Keluar
-          </button>
+          <button
+  onClick={async () => {
+    await supabase.auth.signOut()
+    window.location.href = '/'
+  }}
+  className="flex items-center gap-1.5 text-[#4a6e6e] text-xs mt-2 hover:text-[#e8e4d9] transition"
+>
+  <LogOut size={12} /> Keluar
+</button>
         </div>
       </div>
 
@@ -123,9 +146,96 @@ export default function Dashboard() {
                 <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Produk & Stok</h1>
                 <p className="text-[#6b7280] text-sm">Daftar semua produk obat di apotek</p>
               </div>
-              <button className="bg-[#1a2e2e] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
-                + Tambah Produk
-              </button>
+              <button
+  onClick={() => setShowForm(true)}
+  className="bg-[#1a2e2e] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition"
+>
+  + Tambah Produk
+</button>
+
+{showForm && (
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
+      <h2 className="text-lg font-bold text-[#1a2e2e] mb-4">Tambah Produk Baru</h2>
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Obat *</label>
+            <input value={form.nama_obat} onChange={e => setForm({...form, nama_obat: e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Generik</label>
+            <input value={form.nama_generik} onChange={e => setForm({...form, nama_generik: e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kandungan / Komposisi</label>
+          <input value={form.kandungan} onChange={e => setForm({...form, kandungan: e.target.value})}
+            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kategori</label>
+            <select value={form.kategori} onChange={e => setForm({...form, kategori: e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+              <option value="bebas">Bebas</option>
+              <option value="bebas_terbatas">Bebas Terbatas</option>
+              <option value="keras">Keras</option>
+              <option value="suplemen">Suplemen</option>
+              <option value="psikotropika">Psikotropika</option>
+              <option value="narkotika">Narkotika</option>
+              <option value="prekursor">Prekursor</option>
+              <option value="alkes">Alkes</option>
+              <option value="lainnya">Lainnya</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Satuan</label>
+            <select value={form.satuan} onChange={e => setForm({...form, satuan: e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+              <option>Tablet</option>
+              <option>Kapsul</option>
+              <option>Botol</option>
+              <option>Sachet</option>
+              <option>Tube</option>
+              <option>Ampul</option>
+              <option>Vial</option>
+            </select>
+          </div>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Beli</label>
+            <input type="number" value={form.harga_beli} onChange={e => setForm({...form, harga_beli: +e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Jual</label>
+            <input type="number" value={form.harga_jual} onChange={e => setForm({...form, harga_jual: +e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Stok Awal</label>
+            <input type="number" value={form.stok_total} onChange={e => setForm({...form, stok_total: +e.target.value})}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+          </div>
+        </div>
+      </div>
+      <div className="flex gap-3 mt-5">
+        <button onClick={() => setShowForm(false)}
+          className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition">
+          Batal
+        </button>
+        <button onClick={handleTambahProduk}
+          className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+          Simpan Produk
+        </button>
+      </div>
+    </div>
+  </div>
+)}
             </div>
 
             <div className="mb-4">
