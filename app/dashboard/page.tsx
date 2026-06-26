@@ -20,6 +20,7 @@ export default function Dashboard() {
   const [search, setSearch] = useState('')
   const [keranjang, setKeranjang] = useState<any[]>([])
   const [bayar, setBayar] = useState(0)
+  const [prosesLoading, setProsesLoading] = useState(false)
   const [riwayat, setRiwayat] = useState<any[]>([])
   const [statProduk, setStatProduk] = useState(0)
 const [statTrxHariIni, setStatTrxHariIni] = useState(0)
@@ -477,7 +478,9 @@ const handleTambahProduk = async () => {
 
           <button
             onClick={async () => {
-  if (keranjang.length === 0) return alert('Keranjang kosong!')
+  if (prosesLoading) return
+setProsesLoading(true)
+if (keranjang.length === 0) return alert('Keranjang kosong!')
   const total = keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)
   if (bayar < total) return alert('Pembayaran kurang!')
   const kembalian = bayar - total
@@ -502,17 +505,26 @@ const handleTambahProduk = async () => {
 
     const { error: itemError } = await supabase.from('transaction_items').insert(items)
     if (itemError) { alert('Error items: ' + itemError.message); return }
+    // Kurangi stok setiap produk
+for (const k of keranjang) {
+  await supabase
+    .from('products')
+    .update({ stok_total: k.stok_total - k.jumlah })
+    .eq('id', k.id)
+}
 
     alert(`✅ Transaksi ${trx.nomor_transaksi} berhasil!\nTotal: Rp ${total.toLocaleString('id-ID')}\nKembalian: Rp ${kembalian.toLocaleString('id-ID')}`)
     setKeranjang([])
     setBayar(0)
+    setProsesLoading(false)
   } catch(e) {
     alert('Terjadi kesalahan, coba lagi')
   }
 }}
+            disabled={prosesLoading}
             className="w-full bg-[#1a2e2e] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition"
           >
-            Proses Transaksi
+          {prosesLoading ? 'Memproses...' : 'Proses Transaksi'}
           </button>
 
           <button
