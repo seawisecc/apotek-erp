@@ -53,6 +53,192 @@ export default function Dashboard() {
   useEffect(() => { if (activePage === 'produk') fetchProducts() }, [activePage])
   useEffect(() => { if (activePage === 'laporan') fetchRiwayat() }, [activePage])
   useEffect(() => { if (activePage === 'supplier') fetchSuppliers() }, [activePage])
+  useEffect(() => { if (activePage === 'pembelian') { fetchPOList(); fetchSuppliers() } }, [activePage])
+
+  // PO States
+  const [poList, setPoList] = useState<any[]>([])
+  const [showPOForm, setShowPOForm] = useState(false)
+  const [selectedSupplier, setSelectedSupplier] = useState<any>(null)
+  const [supplierProducts, setSupplierProducts] = useState<any[]>([])
+  const [poItems, setPoItems] = useState<any[]>([])
+  const [poCatatan, setPoCatatan] = useState('')
+  const [showPenerimaan, setShowPenerimaan] = useState<any>(null)
+  const [showPODetail, setShowPODetail] = useState<any>(null)
+  const [penerimaanItems, setPenerimaanItems] = useState<any[]>([])
+
+  const fetchPOList = async () => {
+    const { data } = await supabase.from('purchase_orders').select('*, suppliers(nama_supplier, kode, alamat, telepon)').order('created_at', { ascending: false })
+    setPoList(data || [])
+  }
+
+  const fetchSupplierProducts = async (supplierId: string) => {
+    const { data } = await supabase.from('product_suppliers').select('*, products(*)').eq('supplier_id', supplierId)
+    setSupplierProducts(data?.map((d: any) => d.products) || [])
+  }
+
+  const addPoItem = (product: any) => {
+    const exists = poItems.find(i => i.product_id === product.id)
+    if (exists) return
+    setPoItems([...poItems, {
+      product_id: product.id,
+      nama_produk: product.nama_obat,
+      satuan: product.satuan,
+      qty_pesan: 1,
+      harga_beli: product.harga_beli || 0,
+      subtotal: product.harga_beli || 0
+    }])
+  }
+
+  const updatePoItem = (idx: number, field: string, value: number) => {
+    const updated = [...poItems]
+    updated[idx] = { ...updated[idx], [field]: value }
+    updated[idx].subtotal = updated[idx].qty_pesan * updated[idx].harga_beli
+    setPoItems(updated)
+  }
+
+  const submitPO = async () => {
+    if (!selectedSupplier || poItems.length === 0) return alert('Pilih supplier dan tambah produk dulu!')
+    const total_nilai = poItems.reduce((a, b) => a + b.subtotal, 0)
+    const { data: po, error } = await supabase.from('purchase_orders').insert([{ supplier_id: selectedSupplier.id, total_nilai, catatan: poCatatan }]).select().single()
+    if (error) { alert('Error: ' + error.message); return }
+    await supabase.from('po_items').insert(poItems.map(i => ({ ...i, po_id: po.id })))
+    setShowPOForm(false); setSelectedSupplier(null); setPoItems([]); setPoCatatan(''); setSupplierProducts([])
+    fetchPOList()
+    alert(`✅ PO ${po.nomor_po} berhasil dibuat!`)
+  }
+
+  const openPenerimaan = async (po: any) => {
+    const { data: items } = await supabase.from('po_items').select('*, products(nama_obat, stok_total)').eq('po_id', po.id)
+    setPenerimaanItems(items?.map((item: any) => ({
+      ...item,
+      qty_terima: item.qty_terima || item.qty_pesan,
+      batch_number: item.batch_number || '',
+      expired_date: item.expired_date || '',
+      harga_beli: item.harga_beli || 0,
+    })) || [])
+    setShowPenerimaan(po)
+  }
+
+  const submitPenerimaan = async (closePO: boolean) => {
+    if (!showPenerimaan) return
+    for (const item of penerimaanItems) {
+      if (item.qty_terima > 0) {
+        // Update stok produk
+        await supabase.from('products').update({
+          stok_total: (item.products?.stok_total || 0) + item.qty_terima,
+          harga_beli: item.harga_beli
+        }).eq('id', item.product_id)
+
+        // Catat ke product_batches
+        if (item.batch_number && item.expired_date) {
+          await supabase.from('product_batches').insert([{
+            product_id: item.product_id,
+            batch_number: item.batch_number,
+            expired_date: item.expired_date,
+            stok_batch: item.qty_terima
+          }])
+        }
+
+        // Update po_items
+        await supabase.from('po_items').update({
+          qty_terima: item.qty_terima,
+          batch_number: item.batch_number,
+          expired_date: item.expired_date,
+          harga_beli: item.harga_beli,
+          subtotal: item.qty_terima * item.harga_beli
+        }).eq('id', item.id)
+      }
+    }
+
+    const newStatus = closePO ? 'selesai' : 'dikirim'
+    const newStatusPenerimaan = closePO ? 'selesai' : 'partial'
+    await supabase.from('purchase_orders').update({
+      status: newStatus,
+      status_penerimaan: newStatusPenerimaan,
+      tanggal_terima: new Date().toISOString().split('T')[0]
+    }).eq('id', showPenerimaan.id)
+
+    setShowPenerimaan(null)
+    setPenerimaanItems([])
+    fetchPOList()
+    alert(closePO ? '✅ PO selesai! Stok dan batch sudah diupdate.' : '✅ Penerimaan parsial disimpan. PO masih terbuka.')
+  }
+
+  const printPO = async (po: any) => {
+    const { data: items } = await supabase.from('po_items').select('*').eq('po_id', po.id)
+    const supplier = po.suppliers
+    const win = window.open('', '_blank', 'width=800,height=900')
+    win?.document.write(`<html><head><title>PO - ${po.nomor_po}</title>
+    <style>
+      *{margin:0;padding:0;box-sizing:border-box;}
+      body{font-family:Arial,sans-serif;font-size:12px;padding:32px;}
+      .header{display:flex;justify-content:space-between;margin-bottom:24px;}
+      h1{font-size:18px;font-weight:bold;margin-bottom:4px;}
+      table{width:100%;border-collapse:collapse;margin:16px 0;}
+      th{background:#1a2e2e;color:white;padding:8px;text-align:left;font-size:11px;}
+      td{padding:8px;border-bottom:1px solid #eee;font-size:11px;}
+      .total-row td{font-weight:bold;border-top:2px solid #1a2e2e;}
+      .divider{border-top:2px solid #1a2e2e;margin:12px 0;}
+      .ttd{margin-top:48px;display:flex;justify-content:space-between;}
+      .ttd-box{text-align:center;}
+      .ttd-line{border-top:1px solid black;width:200px;margin:48px auto 4px;}
+    </style></head><body>
+    <div class="header">
+      <div>
+        <h1>${settingsData.nama_apotek}</h1>
+        <p>${settingsData.alamat}</p>
+        <p>SIA: ${settingsData.nomor_ijin} | Telp: ${settingsData.nomor_telepon}</p>
+      </div>
+      <div style="text-align:right;">
+        <h1>PURCHASE ORDER</h1>
+        <p><b>No. PO:</b> ${po.nomor_po}</p>
+        <p><b>Tanggal:</b> ${new Date(po.tanggal_po || po.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'})}</p>
+        <p><b>Status:</b> ${po.status?.toUpperCase()}</p>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div style="margin:12px 0;">
+      <p><b>Kepada Yth:</b></p>
+      <p>${supplier?.nama_supplier || '-'}</p>
+      <p>${supplier?.alamat || ''}</p>
+      <p>${supplier?.telepon || ''}</p>
+    </div>
+    <table>
+      <thead><tr><th>No</th><th>Nama Produk</th><th>Satuan</th><th>Qty</th><th>Harga Beli</th><th>Subtotal</th></tr></thead>
+      <tbody>
+        ${items?.map((item: any, i: number) => `<tr>
+          <td>${i+1}</td><td>${item.nama_produk}</td><td>${item.satuan}</td>
+          <td>${item.qty_pesan}</td>
+          <td>Rp ${item.harga_beli?.toLocaleString('id-ID')}</td>
+          <td>Rp ${item.subtotal?.toLocaleString('id-ID')}</td>
+        </tr>`).join('')}
+        <tr class="total-row"><td colspan="5">TOTAL</td><td>Rp ${po.total_nilai?.toLocaleString('id-ID')}</td></tr>
+      </tbody>
+    </table>
+    ${po.catatan ? `<p><b>Catatan:</b> ${po.catatan}</p>` : ''}
+    <div class="ttd">
+      <div class="ttd-box">
+        <p>Hormat kami,</p>
+        <div class="ttd-line"></div>
+        <p><b>${settingsData.nama_apoteker || 'Apoteker'}</b></p>
+        <p>SIPA: ${settingsData.nomor_sipa || '-'}</p>
+      </div>
+      <div class="ttd-box">
+        <p>Diterima oleh,</p>
+        <div class="ttd-line"></div>
+        <p><b>${supplier?.nama_supplier || '-'}</b></p>
+      </div>
+    </div>
+    </body></html>`)
+    win?.document.close(); win?.print()
+  }
+
+  const statusPOColor: Record<string, string> = {
+    draft: 'bg-yellow-100 text-yellow-700',
+    dikirim: 'bg-blue-100 text-blue-700',
+    selesai: 'bg-green-100 text-green-700',
+    dibatalkan: 'bg-red-100 text-red-700',
+  }
 
   const fetchSettings = async () => {
     const { data } = await supabase.from('settings').select('*').single()
@@ -222,6 +408,196 @@ export default function Dashboard() {
                 if (!error) { setEditProduk(null); setProdukSuppliers([]); fetchProducts() }
               }} className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
                 Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Detail PO */}
+{showPODetail && (
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-lg font-bold text-[#1a2e2e]">Detail PO</h2>
+          <p className="text-xs text-[#6b7280]">{showPODetail.nomor_po}</p>
+        </div>
+        <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusPOColor[showPODetail.status] || 'bg-gray-100 text-gray-600'}`}>
+          {showPODetail.status}
+        </span>
+      </div>
+
+      {/* Info PO */}
+      <div className="grid grid-cols-2 gap-4 mb-4 p-4 bg-[#f5f2eb] rounded-xl text-sm">
+        <div>
+          <p className="text-xs text-[#6b7280] mb-0.5">Supplier</p>
+          <p className="font-medium text-[#1a2e2e]">{showPODetail.suppliers?.nama_supplier}</p>
+        </div>
+        <div>
+          <p className="text-xs text-[#6b7280] mb-0.5">Tanggal PO</p>
+          <p className="font-medium text-[#1a2e2e]">
+            {new Date(showPODetail.tanggal_po || showPODetail.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'})}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-[#6b7280] mb-0.5">Tanggal Terima</p>
+          <p className="font-medium text-[#1a2e2e]">
+            {showPODetail.tanggal_terima ? new Date(showPODetail.tanggal_terima).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'}) : '-'}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs text-[#6b7280] mb-0.5">Total Nilai</p>
+          <p className="font-bold text-[#1a2e2e]">Rp {showPODetail.total_nilai?.toLocaleString('id-ID')}</p>
+        </div>
+        {showPODetail.catatan && (
+          <div className="col-span-2">
+            <p className="text-xs text-[#6b7280] mb-0.5">Catatan</p>
+            <p className="text-[#1a2e2e]">{showPODetail.catatan}</p>
+          </div>
+        )}
+      </div>
+
+      {/* Tabel Item */}
+      <table className="w-full text-sm mb-4">
+        <thead>
+          <tr className="bg-[#1a2e2e]">
+            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Produk</th>
+            <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Pesan</th>
+            <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Terima</th>
+            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. Batch</th>
+            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Expired</th>
+            <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga Beli</th>
+            <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {showPODetail.items?.map((item: any, i: number) => (
+            <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+              <td className="px-3 py-2 font-medium text-[#1a2e2e]">{item.nama_produk}</td>
+              <td className="px-3 py-2 text-center text-[#6b7280]">{item.qty_pesan} {item.satuan}</td>
+              <td className="px-3 py-2 text-center">
+                <span className={`font-medium ${item.qty_terima < item.qty_pesan ? 'text-yellow-600' : 'text-green-600'}`}>
+                  {item.qty_terima || 0} {item.satuan}
+                </span>
+              </td>
+              <td className="px-3 py-2 text-[#6b7280] font-mono text-xs">{item.batch_number || '-'}</td>
+              <td className="px-3 py-2 text-[#6b7280] text-xs">
+                {item.expired_date ? new Date(item.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
+              </td>
+              <td className="px-3 py-2 text-right text-[#1a2e2e]">Rp {item.harga_beli?.toLocaleString('id-ID')}</td>
+              <td className="px-3 py-2 text-right font-medium text-[#1a2e2e]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
+            </tr>
+          ))}
+          <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
+            <td colSpan={6} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">TOTAL</td>
+            <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">
+              Rp {showPODetail.items?.reduce((a: number, b: any) => a + (b.subtotal || 0), 0).toLocaleString('id-ID')}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="flex gap-3">
+        <button onClick={() => setShowPODetail(null)}
+          className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Tutup</button>
+        <button onClick={() => { printPO(showPODetail); }}
+          className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">🖨️ Print PO</button>
+      </div>
+    </div>
+  </div>
+)}
+{/* Modal Penerimaan Barang */}
+      {showPenerimaan && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-3xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#1a2e2e]">Penerimaan Barang</h2>
+                <p className="text-xs text-[#6b7280]">PO: {showPenerimaan.nomor_po} · {showPenerimaan.suppliers?.nama_supplier}</p>
+              </div>
+            </div>
+
+            <table className="w-full text-sm mb-4">
+              <thead>
+                <tr className="bg-[#f5f2eb]">
+                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">Produk</th>
+                  <th className="text-center px-3 py-2 text-xs text-[#6b7280]">Qty PO</th>
+                  <th className="text-center px-3 py-2 text-xs text-[#6b7280]">Qty Terima</th>
+                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">No. Batch</th>
+                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">Expired Date</th>
+                  <th className="text-right px-3 py-2 text-xs text-[#6b7280]">Harga Beli</th>
+                </tr>
+              </thead>
+              <tbody>
+                {penerimaanItems.map((item, idx) => (
+                  <tr key={idx} className="border-t border-[#f0ede6]">
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-[#1a2e2e] text-sm">{item.nama_produk}</div>
+                      <div className="text-xs text-[#9ca3af]">{item.satuan}</div>
+                    </td>
+                    <td className="px-3 py-2 text-center text-[#6b7280]">{item.qty_pesan}</td>
+                    <td className="px-3 py-2">
+                      <input type="number" min={0} max={item.qty_pesan} value={item.qty_terima}
+                        onChange={e => {
+                          const updated = [...penerimaanItems]
+                          updated[idx].qty_terima = +e.target.value
+                          setPenerimaanItems(updated)
+                        }}
+                        className="w-16 text-center border border-[#d1cdc4] rounded px-1 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="text" value={item.batch_number} placeholder="BT-001"
+                        onChange={e => {
+                          const updated = [...penerimaanItems]
+                          updated[idx].batch_number = e.target.value
+                          setPenerimaanItems(updated)
+                        }}
+                        className="w-28 border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="date" value={item.expired_date}
+                        onChange={e => {
+                          const updated = [...penerimaanItems]
+                          updated[idx].expired_date = e.target.value
+                          setPenerimaanItems(updated)
+                        }}
+                        className="w-36 border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input type="number" value={item.harga_beli}
+                        onChange={e => {
+                          const updated = [...penerimaanItems]
+                          updated[idx].harga_beli = +e.target.value
+                          setPenerimaanItems(updated)
+                        }}
+                        className="w-28 text-right border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="bg-[#f5f2eb] rounded-lg p-3 mb-4 text-xs text-[#6b7280]">
+              <p>💡 <b>Penerimaan Parsial:</b> Isi qty terima sesuai barang yang datang. Klik "Simpan Parsial" jika ada sisa yang belum datang, atau "Tutup PO" jika selesai.</p>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => { setShowPenerimaan(null); setPenerimaanItems([]) }}
+                className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+              <button onClick={async () => {
+                await supabase.from('purchase_orders').update({ status: 'dibatalkan' }).eq('id', showPenerimaan.id)
+                setShowPenerimaan(null); setPenerimaanItems([]); fetchPOList()
+              }} className="px-4 border border-red-200 text-red-500 py-2 rounded-lg text-sm hover:bg-red-50 transition">
+                Batalkan PO
+              </button>
+              <button onClick={() => submitPenerimaan(false)}
+                className="flex-1 border-2 border-[#1a2e2e] text-[#1a2e2e] py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition">
+                Simpan Parsial
+              </button>
+              <button onClick={() => submitPenerimaan(true)}
+                className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+                Terima & Tutup PO
               </button>
             </div>
           </div>
@@ -664,8 +1040,172 @@ export default function Dashboard() {
           {/* PEMBELIAN */}
           {activePage === 'pembelian' && (
             <div>
-              <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Pembelian</h1>
-              <p className="text-[#6b7280] text-sm">Halaman ini akan segera tersedia.</p>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Pembelian</h1>
+                  <p className="text-[#6b7280] text-sm">Purchase Order ke supplier</p>
+                </div>
+                <button onClick={() => setShowPOForm(true)}
+                  className="bg-[#1a2e2e] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+                  + Buat PO
+                </button>
+              </div>
+
+              {showPOForm && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                  <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
+                    <h2 className="text-lg font-bold text-[#1a2e2e] mb-4">Buat Purchase Order</h2>
+                    <div className="mb-4">
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Pilih Supplier *</label>
+                      <select onChange={async (e) => {
+                        const s = suppliers.find((x: any) => x.id === e.target.value)
+                        setSelectedSupplier(s || null); setPoItems([])
+                        if (s) fetchSupplierProducts(s.id)
+                      }} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+                        <option value="">-- Pilih Supplier --</option>
+                        {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.nama_supplier} ({s.jenis})</option>)}
+                      </select>
+                    </div>
+                    {selectedSupplier && (
+                      <div className="mb-4">
+                        <label className="text-xs font-medium text-[#6b7280] mb-2 block">Produk dari {selectedSupplier.nama_supplier}</label>
+                        {supplierProducts.length === 0 ? (
+                          <p className="text-xs text-[#9ca3af] p-3 bg-gray-50 rounded-lg">Belum ada produk yang di-assign ke supplier ini.</p>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                            {supplierProducts.map((p: any) => (
+                              <div key={p.id} onClick={() => addPoItem(p)}
+                                className={`px-3 py-2 rounded-lg border cursor-pointer text-sm transition ${
+                                  poItems.some(i => i.product_id === p.id) ? 'border-[#1a2e2e] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'
+                                }`}>
+                                <div className="font-medium text-[#1a2e2e]">{p.nama_obat}</div>
+                                <div className="text-xs text-[#9ca3af]">{p.satuan} · Stok: {p.stok_total}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {poItems.length > 0 && (
+                      <div className="mb-4">
+                        <label className="text-xs font-medium text-[#6b7280] mb-2 block">Detail Order</label>
+                        <table className="w-full text-sm border border-[#f0ede6] rounded-lg overflow-hidden">
+                          <thead>
+                            <tr className="bg-[#f5f2eb]">
+                              <th className="text-left px-3 py-2 text-xs text-[#6b7280]">Produk</th>
+                              <th className="text-left px-3 py-2 text-xs text-[#6b7280]">Satuan</th>
+                              <th className="text-center px-3 py-2 text-xs text-[#6b7280]">Qty</th>
+                              <th className="text-right px-3 py-2 text-xs text-[#6b7280]">Harga Beli</th>
+                              <th className="text-right px-3 py-2 text-xs text-[#6b7280]">Subtotal</th>
+                              <th className="px-2 py-2"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {poItems.map((item, idx) => (
+                              <tr key={idx} className="border-t border-[#f0ede6]">
+                                <td className="px-3 py-2 text-[#1a2e2e] font-medium">{item.nama_produk}</td>
+                                <td className="px-3 py-2 text-[#6b7280]">{item.satuan}</td>
+                                <td className="px-3 py-2">
+                                  <input type="number" min={1} value={item.qty_pesan}
+                                    onChange={e => updatePoItem(idx, 'qty_pesan', +e.target.value)}
+                                    className="w-16 text-center border border-[#d1cdc4] rounded px-1 py-0.5 text-sm" />
+                                </td>
+                                <td className="px-3 py-2">
+                                  <input type="number" value={item.harga_beli}
+                                    onChange={e => updatePoItem(idx, 'harga_beli', +e.target.value)}
+                                    className="w-24 text-right border border-[#d1cdc4] rounded px-1 py-0.5 text-sm" />
+                                </td>
+                                <td className="px-3 py-2 text-right text-[#1a2e2e]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
+                                <td className="px-2 py-2 text-center">
+                                  <button onClick={() => setPoItems(poItems.filter((_, i) => i !== idx))}
+                                    className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                                </td>
+                              </tr>
+                            ))}
+                            <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
+                              <td colSpan={4} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">TOTAL</td>
+                              <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">Rp {poItems.reduce((a, b) => a + b.subtotal, 0).toLocaleString('id-ID')}</td>
+                              <td></td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <div className="mb-4">
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Catatan (opsional)</label>
+                      <textarea value={poCatatan} onChange={e => setPoCatatan(e.target.value)} rows={2}
+                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={() => { setShowPOForm(false); setSelectedSupplier(null); setPoItems([]); setPoCatatan('') }}
+                        className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+                      <button onClick={submitPO}
+                        className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Buat PO</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#f0ede6]">
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">No. PO</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Supplier</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Tanggal</th>
+                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Total</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {poList.length === 0 ? (
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada PO — buat PO pertama</td></tr>
+                    ) : (
+                      poList.map((po: any) => (
+                        <tr key={po.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                          <td className="px-4 py-3 font-mono text-xs text-[#1a2e2e] font-medium">{po.nomor_po}</td>
+                          <td className="px-4 py-3 text-[#1a2e2e]">{po.suppliers?.nama_supplier}</td>
+                          <td className="px-4 py-3 text-[#6b7280]">
+                            {new Date(po.tanggal_po || po.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})}
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-[#1a2e2e]">Rp {po.total_nilai?.toLocaleString('id-ID')}</td>
+                          <td className="px-4 py-3 text-center">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusPOColor[po.status] || 'bg-gray-100 text-gray-600'}`}>{po.status}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => printPO(po)} className="text-xs text-[#1a2e2e] hover:underline font-medium">Print</button>
+<span className="text-[#d1cdc4]">|</span>
+<button onClick={async () => {
+  const { data: items } = await supabase.from('po_items').select('*').eq('po_id', po.id)
+  setShowPODetail({ ...po, items: items || [] })
+}} className="text-xs text-[#6b7280] hover:underline font-medium">Detail</button>
+                              {po.status === 'draft' && (
+                                <>
+                                  <span className="text-[#d1cdc4]">|</span>
+                                  <button onClick={async () => {
+                                    await supabase.from('purchase_orders').update({ status: 'dikirim' }).eq('id', po.id)
+                                    fetchPOList()
+                                  }} className="text-xs text-blue-600 hover:underline font-medium">Kirim</button>
+                                </>
+                              )}
+                              {po.status === 'dikirim' && (
+                                <>
+                                  <span className="text-[#d1cdc4]">|</span>
+                                  <button onClick={() => openPenerimaan(po)} className="text-xs text-green-600 hover:underline font-medium">
+                                    {po.status_penerimaan === 'partial' ? 'Terima Lagi' : 'Terima Barang'}
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
@@ -815,7 +1355,7 @@ export default function Dashboard() {
           {activePage === 'pengaturan' && (
             <div>
               <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Pengaturan Apotek</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Data apotek untuk struk dan laporan</p>
+              <p className="text-[#6b7280] text-sm mb-6">Data apotek untuk struk, laporan, dan PO</p>
               <div className="bg-white rounded-xl shadow-sm p-6 max-w-lg">
                 <div className="space-y-4">
                   <div>
@@ -837,6 +1377,23 @@ export default function Dashboard() {
                     <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor Telepon</label>
                     <input value={settingsData.nomor_telepon} onChange={e => setSettingsData({...settingsData, nomor_telepon: e.target.value})}
                       className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                  </div>
+                  <div className="border-t border-[#f0ede6] pt-4">
+                    <p className="text-xs font-semibold text-[#1a2e2e] mb-3 uppercase tracking-wide">Data Apoteker</p>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nama Apoteker</label>
+                        <input value={settingsData.nama_apoteker || ''} onChange={e => setSettingsData({...settingsData, nama_apoteker: e.target.value})}
+                          placeholder="apt. Nama Apoteker, S.Farm"
+                          className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor SIPA</label>
+                        <input value={settingsData.nomor_sipa || ''} onChange={e => setSettingsData({...settingsData, nomor_sipa: e.target.value})}
+                          placeholder="SIPA/001/2024/..."
+                          className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                      </div>
+                    </div>
                   </div>
                   <button onClick={async () => {
                     const { error } = await supabase.from('settings').update(settingsData).eq('id', settingsData.id)
