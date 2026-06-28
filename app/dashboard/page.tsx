@@ -63,8 +63,10 @@ export default function Dashboard() {
   const [poItems, setPoItems] = useState<any[]>([])
   const [poCatatan, setPoCatatan] = useState('')
   const [showPenerimaan, setShowPenerimaan] = useState<any>(null)
-  const [showPODetail, setShowPODetail] = useState<any>(null)
   const [penerimaanItems, setPenerimaanItems] = useState<any[]>([])
+  const [showPODetail, setShowPODetail] = useState<any>(null)
+  const [showTrxDetail, setShowTrxDetail] = useState<any>(null)
+  const [trxDetailItems, setTrxDetailItems] = useState<any[]>([])
 
   const fetchPOList = async () => {
     const { data } = await supabase.from('purchase_orders').select('*, suppliers(nama_supplier, kode, alamat, telepon)').order('created_at', { ascending: false })
@@ -410,6 +412,72 @@ export default function Dashboard() {
                 Simpan Perubahan
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Detail Transaksi */}
+      {showTrxDetail && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-lg font-bold text-[#1a2e2e]">Detail Transaksi</h2>
+                <p className="text-xs text-[#6b7280]">{showTrxDetail.nomor_transaksi}</p>
+              </div>
+              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                showTrxDetail.status === 'dibatalkan' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
+              }`}>{showTrxDetail.status}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 mb-4 p-4 bg-[#f5f2eb] rounded-xl text-sm">
+              <div>
+                <p className="text-xs text-[#6b7280] mb-0.5">Waktu</p>
+                <p className="font-medium text-[#1a2e2e]">{new Date(showTrxDetail.created_at).toLocaleString('id-ID')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6b7280] mb-0.5">Total</p>
+                <p className="font-bold text-[#1a2e2e]">Rp {showTrxDetail.total?.toLocaleString('id-ID')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6b7280] mb-0.5">Bayar</p>
+                <p className="font-medium text-[#1a2e2e]">Rp {showTrxDetail.bayar?.toLocaleString('id-ID')}</p>
+              </div>
+              <div>
+                <p className="text-xs text-[#6b7280] mb-0.5">Kembalian</p>
+                <p className="font-medium text-[#1a2e2e]">Rp {showTrxDetail.kembalian?.toLocaleString('id-ID')}</p>
+              </div>
+            </div>
+
+            <table className="w-full text-sm mb-4">
+              <thead>
+                <tr className="bg-[#1a2e2e]">
+                  <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Produk</th>
+                  <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty</th>
+                  <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga</th>
+                  <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trxDetailItems.map((item, i) => (
+                  <tr key={i} className="border-b border-[#f0ede6]">
+                    <td className="px-3 py-2 font-medium text-[#1a2e2e]">{item.nama_obat}</td>
+                    <td className="px-3 py-2 text-center text-[#6b7280]">{item.jumlah}</td>
+                    <td className="px-3 py-2 text-right text-[#6b7280]">Rp {item.harga_jual?.toLocaleString('id-ID')}</td>
+                    <td className="px-3 py-2 text-right font-medium text-[#1a2e2e]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
+                  <td colSpan={3} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">TOTAL</td>
+                  <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">
+                    Rp {trxDetailItems.reduce((a, b) => a + (b.subtotal || 0), 0).toLocaleString('id-ID')}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <button onClick={() => { setShowTrxDetail(null); setTrxDetailItems([]) }}
+              className="w-full border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Tutup</button>
           </div>
         </div>
       )}
@@ -1316,11 +1384,12 @@ export default function Dashboard() {
                       <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Bayar</th>
                       <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Kembalian</th>
                       <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {riwayat.length === 0 ? (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada transaksi</td></tr>
+                      <tr><td colSpan={7} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada transaksi</td></tr>
                     ) : (
                       riwayat.map(trx => (
                         <tr key={trx.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
@@ -1332,7 +1401,37 @@ export default function Dashboard() {
                           <td className="px-4 py-3 text-right text-[#6b7280]">Rp {trx.bayar?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-right text-[#6b7280]">Rp {trx.kembalian?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-center">
-                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">{trx.status}</span>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                              trx.status === 'dibatalkan' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
+                            }`}>{trx.status}</span>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={async () => {
+                                const { data: items } = await supabase.from('transaction_items').select('*').eq('transaction_id', trx.id)
+                                setTrxDetailItems(items || [])
+                                setShowTrxDetail(trx)
+                              }} className="text-xs text-[#1a2e2e] hover:underline font-medium">Detail</button>
+                              {trx.status !== 'dibatalkan' && (
+                                <>
+                                  <span className="text-[#d1cdc4]">|</span>
+                                  <button onClick={async () => {
+                                    if (!confirm(`Yakin batalkan transaksi ${trx.nomor_transaksi}? Stok akan dikembalikan.`)) return
+                                    const { data: items } = await supabase.from('transaction_items').select('*, products(stok_total)').eq('transaction_id', trx.id)
+                                    if (items) {
+                                      for (const item of items) {
+                                        await supabase.from('products').update({
+                                          stok_total: (item.products?.stok_total || 0) + item.jumlah
+                                        }).eq('id', item.product_id)
+                                      }
+                                    }
+                                    await supabase.from('transactions').update({ status: 'dibatalkan' }).eq('id', trx.id)
+                                    fetchRiwayat()
+                                    alert('✅ Transaksi dibatalkan, stok dikembalikan.')
+                                  }} className="text-xs text-red-500 hover:underline font-medium">Batalkan</button>
+                                </>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1344,7 +1443,7 @@ export default function Dashboard() {
                 <div className="mt-4 bg-white rounded-xl shadow-sm p-4 flex justify-between items-center">
                   <span className="text-sm text-[#6b7280]">Total {riwayat.length} transaksi</span>
                   <span className="text-sm font-semibold text-[#1a2e2e]">
-                    Total Omzet: Rp {riwayat.reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
+                    Total Omzet: Rp {riwayat.filter(t => t.status !== 'dibatalkan').reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
                   </span>
                 </div>
               )}
@@ -1396,8 +1495,24 @@ export default function Dashboard() {
                     </div>
                   </div>
                   <button onClick={async () => {
-                    const { error } = await supabase.from('settings').update(settingsData).eq('id', settingsData.id)
-                    if (!error) alert('✅ Data apotek berhasil disimpan!')
+                    const { data: existing } = await supabase.from('settings').select('id').single()
+                    let error
+                    if (existing) {
+                      const result = await supabase.from('settings').update({
+                        nama_apotek: settingsData.nama_apotek,
+                        alamat: settingsData.alamat,
+                        nomor_ijin: settingsData.nomor_ijin,
+                        nomor_telepon: settingsData.nomor_telepon,
+                        nama_apoteker: settingsData.nama_apoteker,
+                        nomor_sipa: settingsData.nomor_sipa,
+                      }).eq('id', existing.id)
+                      error = result.error
+                    } else {
+                      const result = await supabase.from('settings').insert([settingsData])
+                      error = result.error
+                    }
+                    if (!error) { alert('✅ Data apotek berhasil disimpan!'); fetchSettings() }
+                    else alert('Error: ' + error.message)
                   }} className="w-full bg-[#1a2e2e] text-[#e8e4d9] py-2.5 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
                     Simpan Perubahan
                   </button>
