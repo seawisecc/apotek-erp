@@ -47,10 +47,16 @@ export default function Dashboard() {
   })
   const [editProduk, setEditProduk] = useState<any>(null)
   const [produkSuppliers, setProdukSuppliers] = useState<any[]>([])
+  const [expiredAlerts, setExpiredAlerts] = useState<any[]>([])
+  const [showProdukDetail, setShowProdukDetail] = useState<any>(null)
+  const [produkDetailTab, setProdukDetailTab] = useState('info')
+  const [produkBatches, setProdukBatches] = useState<any[]>([])
+  const [produkTrxOut, setProdukTrxOut] = useState<any[]>([])
+  const [produkTrxIn, setProdukTrxIn] = useState<any[]>([])
 
   useEffect(() => { fetchSettings() }, [])
   useEffect(() => { if (activePage === 'dashboard') fetchStats() }, [activePage])
-  useEffect(() => { if (activePage === 'produk') fetchProducts() }, [activePage])
+  useEffect(() => { if (activePage === 'produk') { fetchProducts(); fetchExpiredAlerts() } }, [activePage])
   useEffect(() => { if (activePage === 'laporan') fetchRiwayat() }, [activePage])
   useEffect(() => { if (activePage === 'supplier') fetchSuppliers() }, [activePage])
   useEffect(() => { if (activePage === 'pembelian') { fetchPOList(); fetchSuppliers() } }, [activePage])
@@ -263,6 +269,48 @@ export default function Dashboard() {
     setLoading(false)
   }
 
+  const fetchExpiredAlerts = async () => {
+    const today = new Date()
+    const in60Days = new Date()
+    in60Days.setDate(today.getDate() + 60)
+    const { data } = await supabase
+      .from('product_batches')
+      .select('*, products(nama_obat, kode)')
+      .lte('expired_date', in60Days.toISOString().split('T')[0])
+      .gt('stok_batch', 0)
+      .order('expired_date')
+    setExpiredAlerts(data || [])
+  }
+
+  const openProdukDetail = async (produk: any) => {
+    setShowProdukDetail(produk)
+    setProdukDetailTab('info')
+
+    // Fetch batches
+    const { data: batches } = await supabase
+      .from('product_batches')
+      .select('*')
+      .eq('product_id', produk.id)
+      .order('expired_date')
+    setProdukBatches(batches || [])
+
+    // Fetch riwayat keluar (transaksi)
+    const { data: trxOut } = await supabase
+      .from('transaction_items')
+      .select('*, transactions(nomor_transaksi, created_at, status)')
+      .eq('product_id', produk.id)
+      .order('created_at', { ascending: false })
+    setProdukTrxOut(trxOut || [])
+
+    // Fetch riwayat masuk (PO)
+    const { data: trxIn } = await supabase
+      .from('po_items')
+      .select('*, purchase_orders(nomor_po, tanggal_terima, status, suppliers(nama_supplier))')
+      .eq('product_id', produk.id)
+      .order('created_at', { ascending: false })
+    setProdukTrxIn(trxIn || [])
+  }
+
   const fetchRiwayat = async () => {
     const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false })
     setRiwayat(data || [])
@@ -319,6 +367,215 @@ export default function Dashboard() {
 
   return (
     <>
+      {/* Modal Detail Produk */}
+      {showProdukDetail && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl w-full max-w-3xl shadow-xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="p-6 border-b border-[#f0ede6]">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h2 className="text-lg font-bold text-[#1a2e2e]">{showProdukDetail.nama_obat}</h2>
+                  <p className="text-xs text-[#6b7280]">{showProdukDetail.kode} · {showProdukDetail.nama_generik}</p>
+                </div>
+                <button onClick={() => setShowProdukDetail(null)}
+                  className="text-[#9ca3af] hover:text-[#1a2e2e] text-xl font-light">✕</button>
+              </div>
+              {/* Tabs */}
+              <div className="flex gap-1 mt-4">
+                {['info', 'batch', 'keluar', 'masuk'].map(tab => (
+                  <button key={tab} onClick={() => setProdukDetailTab(tab)}
+                    className={`px-4 py-1.5 rounded-lg text-xs font-medium transition ${
+                      produkDetailTab === tab ? 'bg-[#1a2e2e] text-[#e8e4d9]' : 'text-[#6b7280] hover:bg-[#f5f2eb]'
+                    }`}>
+                    {tab === 'info' ? 'Info Produk' : tab === 'batch' ? 'Batch & Expired' : tab === 'keluar' ? 'Riwayat Keluar' : 'Riwayat Masuk'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+
+              {/* TAB INFO */}
+              {produkDetailTab === 'info' && (
+                <div className="grid grid-cols-2 gap-4">
+                  {[
+                    { label: 'Kode', value: showProdukDetail.kode },
+                    { label: 'Kategori', value: showProdukDetail.kategori },
+                    { label: 'Satuan', value: showProdukDetail.satuan },
+                    { label: 'Isi Kemasan', value: showProdukDetail.isi_kemasan },
+                    { label: 'Harga Beli', value: `Rp ${showProdukDetail.harga_beli?.toLocaleString('id-ID')}` },
+                    { label: 'Harga Jual', value: `Rp ${showProdukDetail.harga_jual?.toLocaleString('id-ID')}` },
+                    { label: 'Stok Total', value: showProdukDetail.stok_total },
+                    { label: 'Stok Minimum', value: showProdukDetail.stok_minimum },
+                    { label: 'Status', value: showProdukDetail.status },
+                    { label: 'Margin', value: `${(((showProdukDetail.harga_jual - showProdukDetail.harga_beli) / showProdukDetail.harga_beli) * 100).toFixed(1)}%` },
+                  ].map((item, i) => (
+                    <div key={i} className="bg-[#f5f2eb] rounded-lg p-3">
+                      <p className="text-xs text-[#6b7280] mb-0.5">{item.label}</p>
+                      <p className="font-medium text-[#1a2e2e] text-sm">{item.value || '-'}</p>
+                    </div>
+                  ))}
+                  <div className="col-span-2 bg-[#f5f2eb] rounded-lg p-3">
+                    <p className="text-xs text-[#6b7280] mb-0.5">Kandungan / Komposisi</p>
+                    <p className="font-medium text-[#1a2e2e] text-sm">{showProdukDetail.kandungan || '-'}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB BATCH */}
+              {produkDetailTab === 'batch' && (
+                <div>
+                  {produkBatches.length === 0 ? (
+                    <p className="text-center text-[#9ca3af] py-8">Belum ada data batch</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-[#1a2e2e]">
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. Batch</th>
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Expired Date</th>
+                          <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Stok Batch</th>
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {produkBatches.map((b: any, i: number) => {
+                          const today = new Date()
+                          const exp = new Date(b.expired_date)
+                          const diffDays = Math.ceil((exp.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+                          const isExpired = diffDays <= 0
+                          const isDanger = diffDays > 0 && diffDays <= 30
+                          const isWarning = diffDays > 30 && diffDays <= 60
+                          return (
+                            <tr key={i} className={`border-b border-[#f0ede6] ${isExpired ? 'bg-red-50' : isDanger ? 'bg-red-50' : isWarning ? 'bg-yellow-50' : ''}`}>
+                              <td className="px-3 py-2 font-mono text-xs text-[#1a2e2e]">{b.batch_number || '-'}</td>
+                              <td className="px-3 py-2 text-sm">
+                                {b.expired_date ? new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'}) : '-'}
+                              </td>
+                              <td className="px-3 py-2 text-center font-medium text-[#1a2e2e]">{b.stok_batch}</td>
+                              <td className="px-3 py-2">
+                                {isExpired ? (
+                                  <span className="px-2 py-0.5 rounded-full text-xs bg-red-200 text-red-800 font-medium">Expired</span>
+                                ) : isDanger ? (
+                                  <span className="px-2 py-0.5 rounded-full text-xs bg-red-100 text-red-700 font-medium">≤ 30 hari</span>
+                                ) : isWarning ? (
+                                  <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700 font-medium">≤ 60 hari</span>
+                                ) : (
+                                  <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 font-medium">Aman</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {/* TAB KELUAR */}
+              {produkDetailTab === 'keluar' && (
+                <div>
+                  {produkTrxOut.length === 0 ? (
+                    <p className="text-center text-[#9ca3af] py-8">Belum ada riwayat penjualan</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-[#1a2e2e]">
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. Transaksi</th>
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Tanggal</th>
+                          <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty</th>
+                          <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga Jual</th>
+                          <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Subtotal</th>
+                          <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {produkTrxOut.map((t: any, i: number) => (
+                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                            <td className="px-3 py-2 font-mono text-xs text-[#1a2e2e]">{t.transactions?.nomor_transaksi}</td>
+                            <td className="px-3 py-2 text-xs text-[#6b7280]">
+                              {t.transactions?.created_at ? new Date(t.transactions.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-center text-[#1a2e2e] font-medium">{t.jumlah}</td>
+                            <td className="px-3 py-2 text-right text-[#6b7280]">Rp {t.harga_jual?.toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2 text-right font-medium text-[#1a2e2e]">Rp {t.subtotal?.toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.transactions?.status === 'dibatalkan' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
+                                {t.transactions?.status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
+                          <td colSpan={2} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">Total Keluar</td>
+                          <td className="px-3 py-2 text-center font-bold text-[#1a2e2e]">
+                            {produkTrxOut.filter(t => t.transactions?.status !== 'dibatalkan').reduce((a: number, b: any) => a + b.jumlah, 0)}
+                          </td>
+                          <td></td>
+                          <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">
+                            Rp {produkTrxOut.filter(t => t.transactions?.status !== 'dibatalkan').reduce((a: number, b: any) => a + b.subtotal, 0).toLocaleString('id-ID')}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+              )}
+
+              {/* TAB MASUK */}
+              {produkDetailTab === 'masuk' && (
+                <div>
+                  {produkTrxIn.length === 0 ? (
+                    <p className="text-center text-[#9ca3af] py-8">Belum ada riwayat penerimaan</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-[#1a2e2e]">
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. PO</th>
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Supplier</th>
+                          <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Tgl Terima</th>
+                          <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Pesan</th>
+                          <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Terima</th>
+                          <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga Beli</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {produkTrxIn.map((t: any, i: number) => (
+                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                            <td className="px-3 py-2 font-mono text-xs text-[#1a2e2e]">{t.purchase_orders?.nomor_po}</td>
+                            <td className="px-3 py-2 text-xs text-[#6b7280]">{t.purchase_orders?.suppliers?.nama_supplier}</td>
+                            <td className="px-3 py-2 text-xs text-[#6b7280]">
+                              {t.purchase_orders?.tanggal_terima ? new Date(t.purchase_orders.tanggal_terima).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-center text-[#6b7280]">{t.qty_pesan}</td>
+                            <td className="px-3 py-2 text-center font-medium text-[#1a2e2e]">{t.qty_terima || 0}</td>
+                            <td className="px-3 py-2 text-right text-[#1a2e2e]">Rp {t.harga_beli?.toLocaleString('id-ID')}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
+                          <td colSpan={4} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">Total Masuk</td>
+                          <td className="px-3 py-2 text-center font-bold text-[#1a2e2e]">
+                            {produkTrxIn.reduce((a: number, b: any) => a + (b.qty_terima || 0), 0)}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal Edit Produk */}
       {editProduk && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
@@ -831,6 +1088,52 @@ export default function Dashboard() {
                 </button>
               </div>
 
+              {/* Alert Expired */}
+              {expiredAlerts.length > 0 && (
+                <div className="mb-6 space-y-2">
+                  {(() => {
+                    const today = new Date()
+                    const in30 = new Date(); in30.setDate(today.getDate() + 30)
+                    const merah = expiredAlerts.filter(b => new Date(b.expired_date) <= in30)
+                    const kuning = expiredAlerts.filter(b => new Date(b.expired_date) > in30)
+                    return (
+                      <>
+                        {merah.length > 0 && (
+                          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-red-600 font-semibold text-sm">🚨 Expired dalam 30 hari ({merah.length} batch)</span>
+                            </div>
+                            <div className="space-y-1">
+                              {merah.map((b: any, i: number) => (
+                                <div key={i} className="flex justify-between text-xs text-red-700">
+                                  <span className="font-medium">{b.products?.nama_obat} · Batch: {b.batch_number || '-'}</span>
+                                  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {kuning.length > 0 && (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-yellow-700 font-semibold text-sm">⚠️ Expired dalam 31-60 hari ({kuning.length} batch)</span>
+                            </div>
+                            <div className="space-y-1">
+                              {kuning.map((b: any, i: number) => (
+                                <div key={i} className="flex justify-between text-xs text-yellow-700">
+                                  <span className="font-medium">{b.products?.nama_obat} · Batch: {b.batch_number || '-'}</span>
+                                  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+
               {showForm && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
@@ -951,11 +1254,16 @@ export default function Dashboard() {
                             </span>
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <button onClick={() => {
-                              setEditProduk(p)
-                              fetchProdukSuppliers(p.id)
-                              if (suppliers.length === 0) fetchSuppliers()
-                            }} className="text-xs text-[#1a2e2e] hover:underline font-medium">Edit</button>
+                            <div className="flex items-center justify-center gap-2">
+                              <button onClick={() => openProdukDetail(p)}
+                                className="text-xs text-blue-600 hover:underline font-medium">Detail</button>
+                              <span className="text-[#d1cdc4]">|</span>
+                              <button onClick={() => {
+                                setEditProduk(p)
+                                fetchProdukSuppliers(p.id)
+                                if (suppliers.length === 0) fetchSuppliers()
+                              }} className="text-xs text-[#1a2e2e] hover:underline font-medium">Edit</button>
+                            </div>
                           </td>
                         </tr>
                       ))
