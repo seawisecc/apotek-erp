@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut, Settings, Truck,
   FlaskConical, Wallet, CalendarClock, ClipboardList, Printer, Pencil,
   Receipt, CreditCard, Building2, Users, PanelLeftClose, PanelLeft, ChevronRight,
-  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X
+  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X, Download, Database
 } from 'lucide-react'
 import { supabase, createSignupClient } from '../../lib/supabase'
 import { AMBIENT } from '../../lib/theme'
@@ -19,13 +19,14 @@ const menuItems = [
   { id: 'supplier', label: 'Supplier', icon: Truck },
   { id: 'tindaklanjut', label: 'Tindak Lanjut', icon: ClipboardList },
   { id: 'laporan', label: 'Laporan', icon: BarChart2 },
+  { id: 'migrasi', label: 'Migrasi Data', icon: Database },
   { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
 ]
 
 // Hak akses per role: daftar id halaman yang boleh dibuka
 const ROLE_PAGES: Record<string, string[]> = {
-  pemilik:          ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','pengaturan'],
-  admin:            ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','pengaturan'],
+  pemilik:          ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','migrasi','pengaturan'],
+  admin:            ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','migrasi','pengaturan'],
   apoteker:         ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan'],
   asisten_apoteker: ['dashboard','produk','transaksi','tindaklanjut','laporan'],
   kasir:            ['dashboard','transaksi'],
@@ -45,9 +46,13 @@ export default function Dashboard() {
   })
   const [keranjang, setKeranjang] = useState<any[]>([])
   const [bayar, setBayar] = useState(0)
+  const [metodeBayar, setMetodeBayar] = useState('Tunai')
   const [pasienForm, setPasienForm] = useState({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
   const [laporanTab, setLaporanTab] = useState<'penjualan'|'sipnap'>('penjualan')
   const [sipnapForm, setSipnapForm] = useState({ golongan: 'narkotika', bulan: new Date().getMonth() + 1, tahun: new Date().getFullYear() })
+  const [importInfo, setImportInfo] = useState<Record<string, string>>({})
+  const [importing, setImporting] = useState<string | null>(null)
+  const [migrasiCompany, setMigrasiCompany] = useState('')
   const [prosesLoading, setProsesLoading] = useState(false)
   const [showStruk, setShowStruk] = useState(false)
   const [lastTrx, setLastTrx] = useState<any>(null)
@@ -109,6 +114,7 @@ export default function Dashboard() {
   useEffect(() => { if (activePage === 'faktur') fetchFaktur() }, [activePage])
   useEffect(() => { if (activePage === 'pengaturan') fetchUsers() }, [activePage])
   useEffect(() => { if (activePage === 'companies') fetchCompanies() }, [activePage])
+  useEffect(() => { if (activePage === 'migrasi' && isSuper) fetchCompanies() }, [activePage, isSuper])
   useEffect(() => { try { setSidebarCollapsed(localStorage.getItem('sw_sidebar_collapsed') === '1') } catch {} }, [])
 
   // Cek sesi & tentukan role saat masuk dashboard
@@ -605,6 +611,200 @@ export default function Dashboard() {
     }).eq('id', showMasaAktif.id)
     setShowMasaAktif(null)
     fetchCompanies()
+  }
+
+  // ── Migrasi Data (import/export CSV) ──
+  const parseCSV = (text: string): Record<string, string>[] => {
+    text = text.replace(/\r\n?/g, '\n')
+    const rows: string[][] = []
+    let cur: string[] = [], field = '', inQ = false
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]
+      if (inQ) {
+        if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++ } else inQ = false }
+        else field += c
+      } else if (c === '"') inQ = true
+      else if (c === ',') { cur.push(field); field = '' }
+      else if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = '' }
+      else field += c
+    }
+    if (field.length || cur.length) { cur.push(field); rows.push(cur) }
+    const header = (rows.shift() || []).map(h => h.trim())
+    return rows.filter(r => r.some(c => c.trim() !== '')).map(r => {
+      const o: Record<string, string> = {}
+      header.forEach((h, i) => { o[h] = (r[i] ?? '').trim() })
+      return o
+    })
+  }
+
+  const downloadTemplate = (filename: string, headers: string[], examples: string[][]) => {
+    const esc = (v: string) => /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v
+    const lines = [headers.join(','), ...examples.map(r => r.map(esc).join(','))]
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const importProduk = async (file: File) => {
+    const cid = (isSuper && migrasiCompany) ? migrasiCompany : null
+    setImporting('produk'); setImportInfo(p => ({ ...p, produk: '' }))
+    try {
+      const rows = parseCSV(await file.text())
+      const valid = rows.filter(r => r.nama_obat)
+      if (valid.length === 0) { setImportInfo(p => ({ ...p, produk: 'Tidak ada baris valid (kolom nama_obat kosong).' })); return }
+      const payload = valid.map(r => {
+        const o: any = {
+          nama_obat: r.nama_obat, nama_generik: r.nama_generik || null, kandungan: r.kandungan || null,
+          kategori: (r.kategori || 'bebas').toLowerCase().replace(/\s+/g, '_'),
+          satuan: r.satuan || 'Tablet', isi_kemasan: +(r.isi_kemasan || 1) || 1,
+          harga_beli: +(r.harga_beli || 0) || 0, harga_jual: +(r.harga_jual || 0) || 0,
+          stok_total: +(r.stok_total || 0) || 0, stok_minimum: +(r.stok_minimum || 10) || 10,
+        }
+        if (r.kode) o.kode = r.kode
+        if (cid) o.company_id = cid
+        return o
+      })
+      const { error } = await supabase.from('products').insert(payload)
+      if (error) { setImportInfo(p => ({ ...p, produk: 'Error: ' + error.message })); return }
+      setImportInfo(p => ({ ...p, produk: `✅ ${payload.length} produk berhasil diimpor.` }))
+      if (activePage === 'produk') fetchProducts()
+    } catch (e: any) { setImportInfo(p => ({ ...p, produk: 'Gagal membaca file: ' + (e?.message || e) })) }
+    finally { setImporting(null) }
+  }
+
+  const importSupplier = async (file: File) => {
+    const cid = (isSuper && migrasiCompany) ? migrasiCompany : null
+    setImporting('supplier'); setImportInfo(p => ({ ...p, supplier: '' }))
+    try {
+      const rows = parseCSV(await file.text())
+      const valid = rows.filter(r => r.nama_supplier)
+      if (valid.length === 0) { setImportInfo(p => ({ ...p, supplier: 'Tidak ada baris valid (kolom nama_supplier kosong).' })); return }
+      const normJenis = (v: string) => {
+        const s = (v || '').trim().toLowerCase().replace(/[\s-]/g, '')
+        if (!s || s === 'pbf') return 'PBF'
+        if (s.includes('sub') || s.includes('distributor')) return 'Subdistributor'
+        return 'Lainnya'
+      }
+      const payload = valid.map(r => ({ nama_supplier: r.nama_supplier, jenis: normJenis(r.jenis), alamat: r.alamat || null, telepon: r.telepon || null, email: r.email || null, ...(cid ? { company_id: cid } : {}) }))
+      const { error } = await supabase.from('suppliers').insert(payload)
+      if (error) { setImportInfo(p => ({ ...p, supplier: 'Error: ' + error.message })); return }
+      setImportInfo(p => ({ ...p, supplier: `✅ ${payload.length} supplier berhasil diimpor.` }))
+      if (activePage === 'supplier') fetchSuppliers()
+    } catch (e: any) { setImportInfo(p => ({ ...p, supplier: 'Gagal membaca file: ' + (e?.message || e) })) }
+    finally { setImporting(null) }
+  }
+
+  const importStok = async (file: File) => {
+    const cid = (isSuper && migrasiCompany) ? migrasiCompany : null
+    setImporting('stok'); setImportInfo(p => ({ ...p, stok: '' }))
+    try {
+      const rows = parseCSV(await file.text())
+      const valid = rows.filter(r => (r.kode_produk || r.kode) && r.stok_batch)
+      if (valid.length === 0) { setImportInfo(p => ({ ...p, stok: 'Tidak ada baris valid (butuh kode_produk & stok_batch).' })); return }
+      let ok = 0; const gagal: string[] = []
+      for (const r of valid) {
+        const kode = (r.kode_produk || r.kode).trim()
+        let pq = supabase.from('products').select('id, stok_total').eq('kode', kode)
+        if (cid) pq = pq.eq('company_id', cid)
+        const { data: prod } = await pq.maybeSingle()
+        if (!prod) { gagal.push(kode); continue }
+        const qty = +(r.stok_batch || 0) || 0
+        await supabase.from('product_batches').insert([{ product_id: prod.id, batch_number: r.batch_number || null, expired_date: r.expired_date || null, stok_batch: qty, ...(cid ? { company_id: cid } : {}) }])
+        await supabase.from('products').update({ stok_total: (prod.stok_total || 0) + qty }).eq('id', prod.id)
+        ok++
+      }
+      setImportInfo(p => ({ ...p, stok: `✅ ${ok} batch stok awal diimpor.` + (gagal.length ? ` ${gagal.length} kode tidak ditemukan: ${gagal.slice(0, 5).join(', ')}` : '') }))
+    } catch (e: any) { setImportInfo(p => ({ ...p, stok: 'Gagal membaca file: ' + (e?.message || e) })) }
+    finally { setImporting(null) }
+  }
+
+  const importMapping = async (file: File) => {
+    const cid = (isSuper && migrasiCompany) ? migrasiCompany : null
+    setImporting('mapping'); setImportInfo(p => ({ ...p, mapping: '' }))
+    try {
+      const rows = parseCSV(await file.text())
+      const valid = rows.filter(r => (r.kode_produk || r.kode) && (r.nama_supplier || r.kode_supplier))
+      if (valid.length === 0) { setImportInfo(p => ({ ...p, mapping: 'Tidak ada baris valid (butuh kode_produk & nama_supplier).' })); return }
+      let ok = 0; const gagal: string[] = []
+      for (const r of valid) {
+        const kode = (r.kode_produk || r.kode).trim()
+        let pq = supabase.from('products').select('id').eq('kode', kode)
+        if (cid) pq = pq.eq('company_id', cid)
+        const { data: prod } = await pq.maybeSingle()
+        if (!prod) { gagal.push(kode); continue }
+        let sup: any = null
+        if (r.kode_supplier) { let sq = supabase.from('suppliers').select('id').eq('kode', r.kode_supplier.trim()); if (cid) sq = sq.eq('company_id', cid); const { data } = await sq.maybeSingle(); sup = data }
+        if (!sup && r.nama_supplier) { let sq = supabase.from('suppliers').select('id').ilike('nama_supplier', r.nama_supplier.trim()); if (cid) sq = sq.eq('company_id', cid); const { data } = await sq.maybeSingle(); sup = data }
+        if (!sup) { gagal.push(kode + '→' + (r.nama_supplier || r.kode_supplier)); continue }
+        const { data: exists } = await supabase.from('product_suppliers').select('id').eq('product_id', prod.id).eq('supplier_id', sup.id).maybeSingle()
+        if (!exists) await supabase.from('product_suppliers').insert([{ product_id: prod.id, supplier_id: sup.id, ...(cid ? { company_id: cid } : {}) }])
+        ok++
+      }
+      setImportInfo(p => ({ ...p, mapping: `✅ ${ok} mapping produk–supplier diimpor.` + (gagal.length ? ` ${gagal.length} gagal: ${gagal.slice(0, 5).join(', ')}` : '') }))
+    } catch (e: any) { setImportInfo(p => ({ ...p, mapping: 'Gagal membaca file: ' + (e?.message || e) })) }
+    finally { setImporting(null) }
+  }
+
+  const importFakturAwal = async (file: File) => {
+    const cid = (isSuper && migrasiCompany) ? migrasiCompany : null
+    setImporting('fakturawal'); setImportInfo(p => ({ ...p, fakturawal: '' }))
+    try {
+      const rows = parseCSV(await file.text())
+      const valid = rows.filter(r => r.nomor_faktur && r.nama_supplier)
+      if (valid.length === 0) { setImportInfo(p => ({ ...p, fakturawal: 'Tidak ada baris valid (butuh nomor_faktur & nama_supplier).' })); return }
+      let ok = 0; const gagal: string[] = []
+      for (const r of valid) {
+        let sq = supabase.from('suppliers').select('id').ilike('nama_supplier', r.nama_supplier.trim())
+        if (cid) sq = sq.eq('company_id', cid)
+        const { data: sup } = await sq.maybeSingle()
+        if (!sup) { gagal.push(r.nomor_faktur + '→' + r.nama_supplier); continue }
+        const tf = r.tanggal_faktur || new Date().toISOString().split('T')[0]
+        const top = +(r.term_of_payment || 0) || 0
+        let jt = r.tanggal_jatuh_tempo
+        if (!jt) { const d = new Date(tf); d.setDate(d.getDate() + top); jt = d.toISOString().split('T')[0] }
+        await supabase.from('faktur').insert([{ nomor_faktur: r.nomor_faktur.trim(), supplier_id: sup.id, tanggal_faktur: tf, term_of_payment: top, tanggal_jatuh_tempo: jt, total: +(r.total || 0) || 0, status: 'belum_bayar', ...(cid ? { company_id: cid } : {}) }])
+        ok++
+      }
+      setImportInfo(p => ({ ...p, fakturawal: `✅ ${ok} faktur/hutang awal diimpor.` + (gagal.length ? ` ${gagal.length} supplier tidak ditemukan: ${gagal.slice(0, 5).join(', ')}` : '') }))
+      if (activePage === 'faktur') fetchFaktur()
+    } catch (e: any) { setImportInfo(p => ({ ...p, fakturawal: 'Gagal membaca file: ' + (e?.message || e) })) }
+    finally { setImporting(null) }
+  }
+
+  // ── Export / Backup ke CSV ──
+  const scopeExport = (q: any) => (isSuper && migrasiCompany) ? q.eq('company_id', migrasiCompany) : q
+  const exportProduk = async () => {
+    const { data } = await scopeExport(supabase.from('products').select('*').order('kode'))
+    const headers = ['kode', 'nama_obat', 'nama_generik', 'kandungan', 'kategori', 'satuan', 'isi_kemasan', 'harga_beli', 'harga_jual', 'stok_total', 'stok_minimum']
+    downloadTemplate('export_produk.csv', headers, (data || []).map((p: any) => headers.map(h => String(p[h] ?? ''))))
+  }
+  const exportSupplier = async () => {
+    const { data } = await scopeExport(supabase.from('suppliers').select('*').order('kode'))
+    const headers = ['kode', 'nama_supplier', 'jenis', 'alamat', 'telepon', 'email']
+    downloadTemplate('export_supplier.csv', headers, (data || []).map((s: any) => headers.map(h => String(s[h] ?? ''))))
+  }
+  const exportStok = async () => {
+    const { data } = await scopeExport(supabase.from('product_batches').select('*, products(kode)').order('expired_date'))
+    const headers = ['kode_produk', 'batch_number', 'expired_date', 'stok_batch']
+    downloadTemplate('export_stok_batch.csv', headers, (data || []).map((b: any) => [b.products?.kode || '', b.batch_number || '', b.expired_date || '', String(b.stok_batch ?? '')]))
+  }
+  const exportTransaksi = async () => {
+    const { data } = await scopeExport(supabase.from('transactions').select('*').order('created_at', { ascending: false }))
+    const headers = ['nomor_transaksi', 'tanggal', 'total', 'bayar', 'kembalian', 'status', 'nama_pasien', 'kontak_pasien', 'alamat_pasien', 'nomor_resep']
+    downloadTemplate('export_transaksi.csv', headers, (data || []).map((t: any) => [
+      t.nomor_transaksi || '', t.created_at || '', String(t.total ?? ''), String(t.bayar ?? ''), String(t.kembalian ?? ''),
+      t.status || '', t.nama_pasien || '', t.kontak_pasien || '', t.alamat_pasien || '', t.nomor_resep || '',
+    ]))
+  }
+  const exportFaktur = async () => {
+    const { data } = await scopeExport(supabase.from('faktur').select('*, suppliers(nama_supplier), purchase_orders(nomor_po)').order('tanggal_faktur', { ascending: false }))
+    const headers = ['nomor_faktur', 'supplier', 'nomor_po', 'tanggal_faktur', 'term_of_payment', 'tanggal_jatuh_tempo', 'total', 'status', 'tanggal_bayar', 'metode_bayar', 'catatan_bayar']
+    downloadTemplate('export_faktur.csv', headers, (data || []).map((f: any) => [
+      f.nomor_faktur || '', f.suppliers?.nama_supplier || '', f.purchase_orders?.nomor_po || '', f.tanggal_faktur || '',
+      String(f.term_of_payment ?? ''), f.tanggal_jatuh_tempo || '', String(f.total ?? ''), f.status || '',
+      f.tanggal_bayar || '', f.metode_bayar || '', f.catatan_bayar || '',
+    ]))
   }
 
   const fetchStats = async () => {
@@ -1737,7 +1937,7 @@ const batalRetur = async (row: any) => {
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode</label>
                   <select value={bayarForm.metode_bayar} onChange={e => setBayarForm({ ...bayarForm, metode_bayar: e.target.value })}
                     className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
-                    <option>Transfer</option><option>Tunai</option><option>Giro</option><option>Cek</option>
+                    <option>Transfer</option><option>QRIS</option><option>Tunai</option><option>Debit</option><option>Giro</option><option>Cek</option>
                   </select>
                 </div>
               </div>
@@ -1786,7 +1986,7 @@ const batalRetur = async (row: any) => {
                   <span>Total</span><span>Rp {lastTrx.total?.toLocaleString('id-ID')}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
-                  <span>Bayar</span><span>Rp {lastTrx.bayar?.toLocaleString('id-ID')}</span>
+                  <span>Bayar ({lastTrx.metode_bayar || 'Tunai'})</span><span>Rp {lastTrx.bayar?.toLocaleString('id-ID')}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
                   <span>Kembalian</span><span>Rp {lastTrx.kembalian?.toLocaleString('id-ID')}</span>
@@ -1829,7 +2029,7 @@ const batalRetur = async (row: any) => {
                     </div>`).join('')}
                   <div class="divider"></div>
                   <div class="row bold"><span>TOTAL</span><span>Rp ${lastTrx?.total?.toLocaleString('id-ID')}</span></div>
-                  <div class="row small"><span>Bayar</span><span>Rp ${lastTrx?.bayar?.toLocaleString('id-ID')}</span></div>
+                  <div class="row small"><span>Bayar (${lastTrx?.metode_bayar || 'Tunai'})</span><span>Rp ${lastTrx?.bayar?.toLocaleString('id-ID')}</span></div>
                   <div class="row small" style="color:green;"><span>Kembalian</span><span>Rp ${lastTrx?.kembalian?.toLocaleString('id-ID')}</span></div>
                   <div class="divider"></div>
                   <p style="margin-top:8px;">Terima kasih atas kunjungan Anda</p>
@@ -2548,9 +2748,21 @@ const batalRetur = async (row: any) => {
                       </div>
                     )}
                     <div className="mb-3">
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode Pembayaran</label>
+                      <div className="grid grid-cols-3 gap-1.5 mb-3">
+                        {['Tunai','QRIS','Transfer','Debit','Kartu Kredit'].map(m => (
+                          <button key={m} onClick={() => setMetodeBayar(m)}
+                            className={`px-2 py-1.5 rounded-lg text-xs font-medium border transition ${metodeBayar === m ? 'bg-[#1e3a2c] text-white border-[#1e3a2c]' : 'border-[#d1cdc4] text-[#6b7280] hover:bg-[#f5f2eb]'}`}>
+                            {m}
+                          </button>
+                        ))}
+                      </div>
                       <label className="text-xs font-medium text-[#6b7280] mb-1 block">Bayar (Rp)</label>
-                      <input type="number" value={bayar} onChange={e => setBayar(+e.target.value)}
+                      <input type="text" inputMode="numeric" value={bayar ? bayar.toLocaleString('id-ID') : ''}
+                        onChange={e => setBayar(+e.target.value.replace(/\D/g, '') || 0)}
+                        onDoubleClick={() => setBayar(keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0))}
                         className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" placeholder="0" />
+                      <p className="text-[11px] text-[#9ca3af] mt-1">Klik 2× untuk isi otomatis sesuai total.</p>
                     </div>
                     {bayar > 0 && (
                       <div className="flex justify-between text-sm font-semibold text-green-600 mb-4">
@@ -2570,7 +2782,7 @@ const batalRetur = async (row: any) => {
                       const kembalian = bayar - total
                       setProsesLoading(true)
                       try {
-                        const trxPayload: any = { total, bayar, kembalian }
+                        const trxPayload: any = { total, bayar, kembalian, metode_bayar: metodeBayar }
                         if (perluResep) {
                           trxPayload.nama_pasien = pasienForm.nama_pasien.trim()
                           trxPayload.alamat_pasien = pasienForm.alamat_pasien.trim()
@@ -2590,13 +2802,14 @@ const batalRetur = async (row: any) => {
                         setShowStruk(true)
                         setKeranjang([])
                         setBayar(0)
+                        setMetodeBayar('Tunai')
                         setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
                       } catch(e) { alert('Terjadi kesalahan, coba lagi') }
                       finally { setProsesLoading(false) }
                     }} className="w-full bg-[#1e3a2c] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#24462f] transition disabled:opacity-50">
                       {prosesLoading ? 'Memproses...' : 'Proses Transaksi'}
                     </button>
-                    <button onClick={() => { setKeranjang([]); setBayar(0) }}
+                    <button onClick={() => { setKeranjang([]); setBayar(0); setMetodeBayar('Tunai'); setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' }) }}
                       className="w-full mt-2 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition">
                       Batal / Reset
                     </button>
@@ -2999,6 +3212,129 @@ const batalRetur = async (row: any) => {
               </>)}
             </div>
           )}
+
+          {/* MIGRASI DATA */}
+          {activePage === 'migrasi' && (() => {
+            const cards = [
+              {
+                key: 'produk', title: 'Daftar Produk', Icon: Pill,
+                desc: 'Impor katalog obat: nama, kategori, harga, dan stok awal.',
+                cols: 'kode (opsional), nama_obat, nama_generik, kandungan, kategori, satuan, isi_kemasan, harga_beli, harga_jual, stok_total, stok_minimum',
+                hint: 'Kategori: bebas, bebas_terbatas, keras, suplemen, psikotropika, narkotika, prekursor, alkes, lainnya.',
+                file: 'template_produk.csv',
+                headers: ['kode', 'nama_obat', 'nama_generik', 'kandungan', 'kategori', 'satuan', 'isi_kemasan', 'harga_beli', 'harga_jual', 'stok_total', 'stok_minimum'],
+                examples: [['', 'Paracetamol 500mg', 'Paracetamol', 'Paracetamol 500 mg', 'bebas', 'Tablet', '100', '500', '1000', '150', '10']],
+                onUpload: importProduk,
+              },
+              {
+                key: 'supplier', title: 'Daftar Supplier', Icon: Truck,
+                desc: 'Impor daftar PBF / supplier obat.',
+                cols: 'nama_supplier, jenis, alamat, telepon, email',
+                hint: 'Jenis yang valid: PBF, Subdistributor, atau Lainnya (nilai lain otomatis disesuaikan).',
+                file: 'template_supplier.csv',
+                headers: ['nama_supplier', 'jenis', 'alamat', 'telepon', 'email'],
+                examples: [['PT Bina San Prima', 'PBF', 'Jl. Industri No. 1', '021-1234567', 'sales@binasan.co.id']],
+                onUpload: importSupplier,
+              },
+              {
+                key: 'stok', title: 'Stok Awal (Batch)', Icon: PackageOpen,
+                desc: 'Impor stok awal per batch + expired date. Dicocokkan ke produk lewat kode.',
+                cols: 'kode_produk, batch_number, expired_date (YYYY-MM-DD), stok_batch',
+                hint: 'Impor Produk dulu agar kode-nya tersedia. Stok batch akan menambah stok total produk.',
+                file: 'template_stok_awal.csv',
+                headers: ['kode_produk', 'batch_number', 'expired_date', 'stok_batch'],
+                examples: [['OBT-0001', 'BT-2401', '2026-12-31', '150']],
+                onUpload: importStok,
+              },
+              {
+                key: 'mapping', title: 'Mapping Produk–Supplier', Icon: ClipboardList,
+                desc: 'Kaitkan tiap produk ke supplier-nya, agar pembuatan PO otomatis tahu daftar produk per supplier.',
+                cols: 'kode_produk, nama_supplier (atau kode_supplier)',
+                hint: 'Import Produk & Supplier dulu. Nama supplier harus sama persis dengan yang terdaftar.',
+                file: 'template_mapping_produk_supplier.csv',
+                headers: ['kode_produk', 'nama_supplier'],
+                examples: [['OBT-0001', 'PT Bina San Prima']],
+                onUpload: importMapping,
+              },
+              {
+                key: 'fakturawal', title: 'Faktur / Hutang Awal', Icon: Receipt,
+                desc: 'Impor faktur pembelian yang belum lunas — langsung muncul di menu Pembayaran Faktur dengan jatuh tempo.',
+                cols: 'nomor_faktur, nama_supplier, tanggal_faktur (YYYY-MM-DD), term_of_payment, total',
+                hint: 'Import Supplier dulu. Jatuh tempo dihitung dari tanggal_faktur + term_of_payment bila kolom tanggal_jatuh_tempo tidak diisi.',
+                file: 'template_faktur_awal.csv',
+                headers: ['nomor_faktur', 'nama_supplier', 'tanggal_faktur', 'term_of_payment', 'total'],
+                examples: [['INV/2025/0087', 'PT Bina San Prima', '2026-06-15', '30', '2500000']],
+                onUpload: importFakturAwal,
+              },
+            ]
+            return (
+            <div>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Migrasi Data</h1>
+              <p className="text-[#6b7280] text-sm mb-6">Onboarding cepat: unduh template, isi di Excel/Sheets, lalu upload CSV. Data otomatis masuk ke apotek Anda.</p>
+
+              {isSuper && (
+                <div className="mb-5 p-4 rounded-xl border border-amber-300 bg-amber-50 flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-amber-800">Mode Super Admin</p>
+                    <p className="text-xs text-amber-700">Pilih apotek tujuan — data import/export akan masuk/diambil dari apotek ini.</p>
+                  </div>
+                  <select value={migrasiCompany} onChange={e => setMigrasiCompany(e.target.value)}
+                    className="border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                    <option value="">— Pilih Apotek —</option>
+                    {companies.map((c: any) => <option key={c.id} value={c.id}>{c.nama}</option>)}
+                  </select>
+                </div>
+              )}
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {cards.map(c => (
+                  <div key={c.key} className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5 flex flex-col">
+                    <div className="w-11 h-11 rounded-xl bg-[#dce5db] text-[#2f5741] flex items-center justify-center mb-3"><c.Icon size={20} strokeWidth={1.9} /></div>
+                    <h2 className="font-bold text-[#1c2620]">{c.title}</h2>
+                    <p className="text-sm text-[#6b7280] mt-1 mb-3">{c.desc}</p>
+                    <div className="bg-[#f5f2eb] rounded-lg p-3 mb-3">
+                      <p className="text-[11px] font-medium text-[#6b7280] mb-1">Kolom CSV:</p>
+                      <p className="text-[11px] text-[#1c2620] font-mono leading-relaxed break-words">{c.cols}</p>
+                    </div>
+                    <p className="text-[11px] text-[#9ca3af] mb-4">{c.hint}</p>
+                    <div className="mt-auto flex flex-col gap-2">
+                      <button onClick={() => downloadTemplate(c.file, c.headers, c.examples)}
+                        className="inline-flex items-center justify-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition">
+                        <Download size={15} /> Download Template
+                      </button>
+                      <label className={`inline-flex items-center justify-center gap-2 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition cursor-pointer ${importing === c.key ? 'opacity-60 pointer-events-none' : ''}`}>
+                        <Upload size={15} /> {importing === c.key ? 'Mengimpor…' : 'Upload CSV'}
+                        <input type="file" accept=".csv,text/csv" className="hidden"
+                          onChange={e => {
+                            if (isSuper && !migrasiCompany) { alert('Pilih apotek tujuan dulu di atas.'); e.target.value = ''; return }
+                            if (e.target.files?.[0]) { c.onUpload(e.target.files[0]); e.target.value = '' }
+                          }} />
+                      </label>
+                    </div>
+                    {importInfo[c.key] && (
+                      <p className={`text-xs mt-3 ${importInfo[c.key].startsWith('✅') ? 'text-green-700' : 'text-red-600'}`}>{importInfo[c.key]}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-6 bg-white/60 border border-white/60 rounded-xl p-4 text-sm text-[#6b7280] max-w-3xl">
+                <p className="font-medium text-[#1c2620] mb-1">Urutan yang disarankan</p>
+                <p>1) Import <b>Produk</b> → 2) <b>Supplier</b> → 3) <b>Stok Awal</b> → 4) <b>Mapping Produk–Supplier</b>. Simpan file sebagai <b>CSV UTF-8</b>. Header wajib sama persis dengan template.</p>
+              </div>
+
+              {/* Export / Backup */}
+              <div className="mt-6">
+                <h2 className="text-lg font-bold text-[#1c2620] mb-1">Export / Backup Data</h2>
+                <p className="text-sm text-[#6b7280] mb-4">Unduh data apotek saat ini ke CSV (untuk cadangan atau pindah sistem).</p>
+                <div className="flex flex-wrap gap-3">
+                  {([['Produk',exportProduk],['Supplier',exportSupplier],['Stok / Batch',exportStok],['Transaksi',exportTransaksi],['Faktur',exportFaktur]] as const).map(([label, fn]) => (
+                    <button key={label} onClick={() => { if (isSuper && !migrasiCompany) return alert('Pilih apotek tujuan dulu di atas.'); (fn as () => void)() }}
+                      className="inline-flex items-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition"><Download size={15} /> Export {label}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            )
+          })()}
 
           {/* PENGATURAN */}
           {activePage === 'pengaturan' && (() => {
