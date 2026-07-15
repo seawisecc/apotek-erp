@@ -2,19 +2,35 @@
 
 import { useState, useEffect } from 'react'
 import {
-  LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut, Settings, Truck
+  LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut, Settings, Truck,
+  FlaskConical, Wallet, CalendarClock, ClipboardList, Printer, Pencil,
+  Receipt, CreditCard, Building2, Users, PanelLeftClose, PanelLeft, ChevronRight,
+  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X
 } from 'lucide-react'
-import { supabase } from '../../lib/supabase'
+import { supabase, createSignupClient } from '../../lib/supabase'
+import { AMBIENT } from '../../lib/theme'
 
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'produk', label: 'Produk & Stok', icon: Pill },
   { id: 'transaksi', label: 'Transaksi', icon: ShoppingCart },
   { id: 'pembelian', label: 'Pembelian', icon: PackageOpen },
+  { id: 'faktur', label: 'Pembayaran Faktur', icon: Receipt },
   { id: 'supplier', label: 'Supplier', icon: Truck },
+  { id: 'tindaklanjut', label: 'Tindak Lanjut', icon: ClipboardList },
   { id: 'laporan', label: 'Laporan', icon: BarChart2 },
   { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
 ]
+
+// Hak akses per role: daftar id halaman yang boleh dibuka
+const ROLE_PAGES: Record<string, string[]> = {
+  pemilik:          ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','pengaturan'],
+  admin:            ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','pengaturan'],
+  apoteker:         ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan'],
+  asisten_apoteker: ['dashboard','produk','transaksi','tindaklanjut','laporan'],
+  kasir:            ['dashboard','transaksi'],
+}
+const ROLE_LABELS: Record<string,string> = { pemilik:'Pemilik', apoteker:'Apoteker', asisten_apoteker:'Asisten Apoteker', kasir:'Kasir', admin:'Admin', superadmin:'Super Admin' }
 
 export default function Dashboard() {
   const [activePage, setActivePage] = useState('dashboard')
@@ -29,6 +45,9 @@ export default function Dashboard() {
   })
   const [keranjang, setKeranjang] = useState<any[]>([])
   const [bayar, setBayar] = useState(0)
+  const [pasienForm, setPasienForm] = useState({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
+  const [laporanTab, setLaporanTab] = useState<'penjualan'|'sipnap'>('penjualan')
+  const [sipnapForm, setSipnapForm] = useState({ golongan: 'narkotika', bulan: new Date().getMonth() + 1, tahun: new Date().getFullYear() })
   const [prosesLoading, setProsesLoading] = useState(false)
   const [showStruk, setShowStruk] = useState(false)
   const [lastTrx, setLastTrx] = useState<any>(null)
@@ -37,6 +56,7 @@ export default function Dashboard() {
   const [statProduk, setStatProduk] = useState(0)
   const [statTrxHariIni, setStatTrxHariIni] = useState(0)
   const [statOmzet, setStatOmzet] = useState(0)
+  const [statExpired, setStatExpired] = useState(0)
   const [settingsData, setSettingsData] = useState<any>({
     nama_apotek: '', alamat: '', nomor_ijin: '', nomor_telepon: ''
   })
@@ -53,13 +73,101 @@ export default function Dashboard() {
   const [produkBatches, setProdukBatches] = useState<any[]>([])
   const [produkTrxOut, setProdukTrxOut] = useState<any[]>([])
   const [produkTrxIn, setProdukTrxIn] = useState<any[]>([])
+  const [showTindakLanjut, setShowTindakLanjut] = useState<any>(null)
+  const [tindakLanjutMode, setTindakLanjutMode] = useState<'pilih'|'musnahkan'|'retur'>('pilih')
+  const [formMusnahkan, setFormMusnahkan] = useState({ tanggal_musnahkan: new Date().toISOString().split('T')[0], qty_musnahkan: 0, metode: 'Dibakar', saksi_1: '', saksi_2: '', keterangan: '' })
+  const [formRetur, setFormRetur] = useState({ supplier_id: '', tanggal_retur: new Date().toISOString().split('T')[0], qty_retur: 0, alasan: '' })
+  const [batchSupplier, setBatchSupplier] = useState<any>(null)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [currentRole, setCurrentRole] = useState<string | null>(null)
+  const [currentModules, setCurrentModules] = useState<string[] | null>(null)
+  const [isSuper, setIsSuper] = useState(false)
+  const [companyName, setCompanyName] = useState('')
+  const [companyBlocked, setCompanyBlocked] = useState<'pending' | 'expired' | null>(null)
+  const [companies, setCompanies] = useState<any[]>([])
+  const [showMasaAktif, setShowMasaAktif] = useState<any>(null)
+  const [masaAktifDate, setMasaAktifDate] = useState('')
+  const [authName, setAuthName] = useState('')
+  const [settingsTab, setSettingsTab] = useState('profil')
+  const [users, setUsers] = useState<any[]>([])
+  const [showUserForm, setShowUserForm] = useState(false)
+  const [userForm, setUserForm] = useState({ nama: '', email: '', password: '', role: 'kasir', modules: ROLE_PAGES['kasir'] as string[] })
+  const [editUser, setEditUser] = useState<any>(null)
+  const [savingUser, setSavingUser] = useState(false)
+  const [tindakLanjutTab, setTindakLanjutTab] = useState<'musnahkan'|'retur'>('musnahkan')
+  const [riwayatMusnah, setRiwayatMusnah] = useState<any[]>([])
+  const [riwayatRetur, setRiwayatRetur] = useState<any[]>([])
 
   useEffect(() => { fetchSettings() }, [])
+  useEffect(() => { if (activePage === 'tindaklanjut') { fetchRiwayatMusnah(); fetchRiwayatRetur() } }, [activePage])
   useEffect(() => { if (activePage === 'dashboard') fetchStats() }, [activePage])
   useEffect(() => { if (activePage === 'produk') { fetchProducts(); fetchExpiredAlerts() } }, [activePage])
   useEffect(() => { if (activePage === 'laporan') fetchRiwayat() }, [activePage])
   useEffect(() => { if (activePage === 'supplier') fetchSuppliers() }, [activePage])
   useEffect(() => { if (activePage === 'pembelian') { fetchPOList(); fetchSuppliers() } }, [activePage])
+  useEffect(() => { if (activePage === 'faktur') fetchFaktur() }, [activePage])
+  useEffect(() => { if (activePage === 'pengaturan') fetchUsers() }, [activePage])
+  useEffect(() => { if (activePage === 'companies') fetchCompanies() }, [activePage])
+  useEffect(() => { try { setSidebarCollapsed(localStorage.getItem('sw_sidebar_collapsed') === '1') } catch {} }, [])
+
+  // Cek sesi & tentukan role saat masuk dashboard
+  useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { window.location.href = '/'; return }
+      const email = (user.email || '').toLowerCase()
+      setAuthName((user.user_metadata as any)?.nama_lengkap || user.email || '')
+
+      // Cek super admin (penyedia layanan)
+      const { data: sa } = await supabase.from('super_admins').select('email').ilike('email', email).maybeSingle()
+      if (sa) {
+        setIsSuper(true)
+        setCurrentRole('superadmin')
+        setCurrentModules(null)
+        return
+      }
+
+      // Cek status aktivasi apotek (berdasarkan email admin yang mendaftar)
+      const { data: comp } = await supabase.from('companies').select('*').ilike('admin_email', email).maybeSingle()
+      if (comp) {
+        const today = new Date(new Date().toDateString())
+        const expired = comp.valid_sampai && new Date(comp.valid_sampai) < today
+        if (comp.status !== 'aktif') { setCompanyBlocked('pending'); return }
+        if (expired) { setCompanyBlocked('expired'); return }
+        setCompanyName(comp.nama || '')
+        // Apotek baru belum punya settings → prefill nama apotek dari company
+        setSettingsData((prev: any) => prev.nama_apotek ? prev : { ...prev, nama_apotek: comp.nama || '' })
+      }
+
+      const { data: au } = await supabase.from('app_users').select('*').ilike('email', email).maybeSingle()
+      if (au) {
+        if (au.status !== 'aktif') {
+          alert('Akun Anda dinonaktifkan. Hubungi pemilik apotek.')
+          await supabase.auth.signOut(); window.location.href = '/'; return
+        }
+        setCurrentRole(au.role)
+        setCurrentModules(Array.isArray(au.modules) ? au.modules : null)
+      } else {
+        // Email tidak terdaftar di manajemen pengguna → dianggap Pemilik (akses penuh)
+        setCurrentRole('pemilik')
+        setCurrentModules(null)
+      }
+    })()
+  }, [])
+
+  // Akses = daftar modul user (jika diatur) ; kalau kosong pakai default role.
+  // Super admin: akses penuh + halaman Companies.
+  const allowedPages = isSuper
+    ? [...menuItems.map(m => m.id), 'companies']
+    : (currentRole
+        ? (currentModules && currentModules.length ? currentModules : (ROLE_PAGES[currentRole] || ['dashboard']))
+        : [])
+
+  // Jika role tidak boleh membuka halaman aktif, arahkan ke halaman pertama yang diizinkan
+  useEffect(() => {
+    if (currentRole && !allowedPages.includes(activePage)) setActivePage(allowedPages[0] || 'dashboard')
+  }, [currentRole, activePage])
 
   // PO States
   const [poList, setPoList] = useState<any[]>([])
@@ -73,6 +181,109 @@ export default function Dashboard() {
   const [showPODetail, setShowPODetail] = useState<any>(null)
   const [showTrxDetail, setShowTrxDetail] = useState<any>(null)
   const [trxDetailItems, setTrxDetailItems] = useState<any[]>([])
+
+  // Faktur States
+  const [fakturForm, setFakturForm] = useState({ nomor_faktur: '', tanggal_faktur: new Date().toISOString().split('T')[0], term_of_payment: 30 })
+  const [fakturList, setFakturList] = useState<any[]>([])
+  const [showBayar, setShowBayar] = useState<any>(null)
+  const [bayarForm, setBayarForm] = useState({ tanggal_bayar: new Date().toISOString().split('T')[0], metode_bayar: 'Transfer', catatan_bayar: '' })
+
+  const fetchFaktur = async () => {
+    const { data } = await supabase.from('faktur')
+      .select('*, suppliers(nama_supplier), purchase_orders(nomor_po)')
+    const rows = data || []
+    // Urut: belum bayar dulu (by jatuh tempo terdekat), baru yang lunas
+    rows.sort((a: any, b: any) => {
+      const aUnpaid = a.status !== 'lunas' ? 0 : 1
+      const bUnpaid = b.status !== 'lunas' ? 0 : 1
+      if (aUnpaid !== bUnpaid) return aUnpaid - bUnpaid
+      return new Date(a.tanggal_jatuh_tempo || 0).getTime() - new Date(b.tanggal_jatuh_tempo || 0).getTime()
+    })
+    setFakturList(rows)
+  }
+
+  const submitBayar = async () => {
+    if (!showBayar) return
+    const { error } = await supabase.from('faktur').update({
+      status: 'lunas',
+      tanggal_bayar: bayarForm.tanggal_bayar,
+      metode_bayar: bayarForm.metode_bayar,
+      catatan_bayar: bayarForm.catatan_bayar,
+    }).eq('id', showBayar.id)
+    if (error) { alert('Error: ' + error.message); return }
+    const paid = { ...showBayar, status: 'lunas', tanggal_bayar: bayarForm.tanggal_bayar, metode_bayar: bayarForm.metode_bayar, catatan_bayar: bayarForm.catatan_bayar }
+    setShowBayar(null)
+    fetchFaktur()
+    cetakBuktiBayar(paid)
+  }
+
+  const cetakBuktiBayar = (f: any) => {
+    const fmt = (d: any) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '-'
+    const rp = (n: any) => 'Rp ' + (n || 0).toLocaleString('id-ID')
+    const win = window.open('', '_blank', 'width=800,height=900')
+    win?.document.write(`<html><head><title>Bukti Pembayaran ${f.nomor_faktur || ''}</title><style>
+      *{margin:0;padding:0;box-sizing:border-box;}
+      body{font-family:Arial,sans-serif;font-size:12px;padding:40px;color:#1c2620;}
+      .head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;}
+      h1{font-size:16px;font-weight:bold;}
+      .apotek p{font-size:11px;color:#555;}
+      .divider{border-top:2px solid #1e3a2c;margin:12px 0;}
+      .title{text-align:center;margin:8px 0 18px;}
+      .title h2{font-size:15px;letter-spacing:1px;}
+      .title p{font-size:11px;color:#666;}
+      table{width:100%;border-collapse:collapse;margin:6px 0;}
+      td{padding:6px 8px;vertical-align:top;}
+      .label{width:38%;color:#555;}
+      .val{font-weight:600;}
+      .total-box{margin-top:14px;background:#f5f2eb;border-radius:8px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;}
+      .total-box .l{font-size:12px;color:#555;}
+      .total-box .v{font-size:20px;font-weight:bold;}
+      .stamp{margin-top:10px;display:inline-block;border:2px solid #16a34a;color:#16a34a;font-weight:bold;padding:4px 14px;border-radius:6px;letter-spacing:2px;transform:rotate(-4deg);}
+      .ttd{margin-top:48px;display:flex;justify-content:flex-end;}
+      .ttd-box{text-align:center;}
+      .ttd-line{border-top:1px solid #000;width:200px;margin:56px auto 4px;}
+      .foot{margin-top:32px;font-size:10px;color:#999;text-align:center;}
+    </style></head><body>
+      <div class="head">
+        <div class="apotek">
+          <h1>${settingsData.nama_apotek || 'Apotek'}</h1>
+          <p>${settingsData.alamat || ''}</p>
+          <p>SIA: ${settingsData.nomor_ijin || '-'} | Telp: ${settingsData.nomor_telepon || '-'}</p>
+        </div>
+        <div style="text-align:right;">
+          <span class="stamp">LUNAS</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="title">
+        <h2>BUKTI PEMBAYARAN FAKTUR</h2>
+        <p>No. Faktur: ${f.nomor_faktur || '-'}</p>
+      </div>
+      <table>
+        <tr><td class="label">Dibayarkan kepada</td><td class="val">${f.suppliers?.nama_supplier || '-'}</td></tr>
+        <tr><td class="label">No. Purchase Order</td><td>${f.purchase_orders?.nomor_po || '-'}</td></tr>
+        <tr><td class="label">Tanggal Faktur</td><td>${fmt(f.tanggal_faktur)}</td></tr>
+        <tr><td class="label">Jatuh Tempo</td><td>${fmt(f.tanggal_jatuh_tempo)}</td></tr>
+        <tr><td class="label">Tanggal Pembayaran</td><td class="val">${fmt(f.tanggal_bayar)}</td></tr>
+        <tr><td class="label">Metode Pembayaran</td><td>${f.metode_bayar || '-'}</td></tr>
+        ${f.catatan_bayar ? `<tr><td class="label">Catatan</td><td>${f.catatan_bayar}</td></tr>` : ''}
+      </table>
+      <div class="total-box">
+        <span class="l">Jumlah Dibayar</span>
+        <span class="v">${rp(f.total)}</span>
+      </div>
+      <div class="ttd">
+        <div class="ttd-box">
+          <p>Penerima / Penanggung Jawab,</p>
+          <div class="ttd-line"></div>
+          <p><b>${settingsData.nama_apoteker || '-'}</b></p>
+          <p>SIPA: ${settingsData.nomor_sipa || '-'}</p>
+        </div>
+      </div>
+      <div class="foot">Dokumen ini dicetak otomatis oleh Seawise Enterprise Apps — Pharmacy Store Edition.</div>
+    </body></html>`)
+    win?.document.close(); win?.print()
+  }
 
   const fetchPOList = async () => {
     const { data } = await supabase.from('purchase_orders').select('*, suppliers(nama_supplier, kode, alamat, telepon)').order('created_at', { ascending: false })
@@ -124,6 +335,7 @@ export default function Dashboard() {
       expired_date: item.expired_date || '',
       harga_beli: item.harga_beli || 0,
     })) || [])
+    setFakturForm({ nomor_faktur: '', tanggal_faktur: new Date().toISOString().split('T')[0], term_of_payment: 30 })
     setShowPenerimaan(po)
   }
 
@@ -166,10 +378,29 @@ export default function Dashboard() {
       tanggal_terima: new Date().toISOString().split('T')[0]
     }).eq('id', showPenerimaan.id)
 
+    // Buat faktur pembelian dari penerimaan ini (jika nomor faktur diisi)
+    let fakturMsg = ''
+    if (fakturForm.nomor_faktur.trim()) {
+      const totalFaktur = penerimaanItems.reduce((a, b) => a + (b.qty_terima > 0 ? b.qty_terima * b.harga_beli : 0), 0)
+      const jt = new Date(fakturForm.tanggal_faktur)
+      jt.setDate(jt.getDate() + (Number(fakturForm.term_of_payment) || 0))
+      const { error: fErr } = await supabase.from('faktur').insert([{
+        nomor_faktur: fakturForm.nomor_faktur.trim(),
+        po_id: showPenerimaan.id,
+        supplier_id: showPenerimaan.supplier_id,
+        tanggal_faktur: fakturForm.tanggal_faktur,
+        term_of_payment: Number(fakturForm.term_of_payment) || 0,
+        tanggal_jatuh_tempo: jt.toISOString().split('T')[0],
+        total: totalFaktur,
+        status: 'belum_bayar',
+      }])
+      fakturMsg = fErr ? `\n⚠️ Faktur gagal disimpan: ${fErr.message}` : `\n🧾 Faktur ${fakturForm.nomor_faktur.trim()} tercatat (jatuh tempo ${jt.toLocaleDateString('id-ID')}).`
+    }
+
     setShowPenerimaan(null)
     setPenerimaanItems([])
     fetchPOList()
-    alert(closePO ? '✅ PO selesai! Stok dan batch sudah diupdate.' : '✅ Penerimaan parsial disimpan. PO masih terbuka.')
+    alert((closePO ? '✅ PO selesai! Stok dan batch sudah diupdate.' : '✅ Penerimaan parsial disimpan. PO masih terbuka.') + fakturMsg)
   }
 
   const printPO = async (po: any) => {
@@ -183,10 +414,10 @@ export default function Dashboard() {
       .header{display:flex;justify-content:space-between;margin-bottom:24px;}
       h1{font-size:18px;font-weight:bold;margin-bottom:4px;}
       table{width:100%;border-collapse:collapse;margin:16px 0;}
-      th{background:#1a2e2e;color:white;padding:8px;text-align:left;font-size:11px;}
+      th{background:#1e3a2c;color:white;padding:8px;text-align:left;font-size:11px;}
       td{padding:8px;border-bottom:1px solid #eee;font-size:11px;}
-      .total-row td{font-weight:bold;border-top:2px solid #1a2e2e;}
-      .divider{border-top:2px solid #1a2e2e;margin:12px 0;}
+      .total-row td{font-weight:bold;border-top:2px solid #1e3a2c;}
+      .divider{border-top:2px solid #1e3a2c;margin:12px 0;}
       .ttd{margin-top:48px;display:flex;justify-content:space-between;}
       .ttd-box{text-align:center;}
       .ttd-line{border-top:1px solid black;width:200px;margin:48px auto 4px;}
@@ -249,8 +480,131 @@ export default function Dashboard() {
   }
 
   const fetchSettings = async () => {
-    const { data } = await supabase.from('settings').select('*').single()
+    const { data } = await supabase.from('settings').select('*').maybeSingle()
     if (data) setSettingsData(data)
+  }
+
+  const saveSettings = async () => {
+    const payload = {
+      nama_apotek: settingsData.nama_apotek,
+      sektor_usaha: settingsData.sektor_usaha,
+      kota: settingsData.kota,
+      alamat: settingsData.alamat,
+      nomor_ijin: settingsData.nomor_ijin,
+      nomor_telepon: settingsData.nomor_telepon,
+      email: settingsData.email,
+      logo_url: settingsData.logo_url,
+      nama_apoteker: settingsData.nama_apoteker,
+      nomor_sipa: settingsData.nomor_sipa,
+    }
+    const { data: existing } = await supabase.from('settings').select('id').maybeSingle()
+    const { error } = existing
+      ? await supabase.from('settings').update(payload).eq('id', existing.id)
+      : await supabase.from('settings').insert([payload])
+    if (!error) { alert('✅ Data apotek berhasil disimpan!'); fetchSettings() }
+    else alert('Error: ' + error.message)
+  }
+
+  // ── Manajemen pengguna / role ──
+  const fetchUsers = async () => {
+    const { data } = await supabase.from('app_users').select('*').order('created_at', { ascending: true })
+    setUsers(data || [])
+  }
+
+  const openTambahUser = () => {
+    setUserForm({ nama: '', email: '', password: '', role: 'kasir', modules: ROLE_PAGES['kasir'] })
+    setShowUserForm(true)
+  }
+
+  const handleTambahUser = async () => {
+    if (!userForm.nama.trim() || !userForm.email.trim() || !userForm.password) { alert('Email, password, dan nama wajib diisi'); return }
+    if (userForm.password.length < 6) { alert('Password minimal 6 karakter'); return }
+    setSavingUser(true)
+    // 1. Buat akun login (pakai client isolasi agar sesi admin tidak berganti)
+    const tmp = createSignupClient()
+    const { error: authErr } = await tmp.auth.signUp({
+      email: userForm.email.trim(),
+      password: userForm.password,
+      options: { data: { nama_lengkap: userForm.nama.trim() } },
+    })
+    if (authErr && !/already registered|already been registered/i.test(authErr.message)) {
+      setSavingUser(false); alert('Gagal membuat akun login: ' + authErr.message); return
+    }
+    // 2. Simpan ke direktori pengguna + hak akses modul
+    const { error } = await supabase.from('app_users').insert([{
+      nama: userForm.nama.trim(), email: userForm.email.trim().toLowerCase(),
+      role: userForm.role, status: 'aktif', modules: userForm.modules,
+    }])
+    setSavingUser(false)
+    if (error) { alert('Akun login dibuat, tapi gagal simpan data: ' + error.message); return }
+    setShowUserForm(false)
+    fetchUsers()
+    alert('✅ Pengguna dibuat. User bisa langsung login dengan email & password tersebut.')
+  }
+
+  const handleUpdateUser = async () => {
+    if (!editUser) return
+    const { error } = await supabase.from('app_users').update({
+      nama: editUser.nama, email: editUser.email, role: editUser.role, status: editUser.status,
+      modules: Array.isArray(editUser.modules) ? editUser.modules : [],
+    }).eq('id', editUser.id)
+    if (error) { alert('Error: ' + error.message); return }
+    setEditUser(null)
+    fetchUsers()
+  }
+
+  // Toggle satu modul pada userForm / editUser
+  const toggleFormModule = (target: 'new' | 'edit', pageId: string) => {
+    if (target === 'new') {
+      const has = userForm.modules.includes(pageId)
+      setUserForm({ ...userForm, modules: has ? userForm.modules.filter(m => m !== pageId) : [...userForm.modules, pageId] })
+    } else if (editUser) {
+      const mods: string[] = Array.isArray(editUser.modules) ? editUser.modules : []
+      const has = mods.includes(pageId)
+      setEditUser({ ...editUser, modules: has ? mods.filter(m => m !== pageId) : [...mods, pageId] })
+    }
+  }
+
+  const toggleUserStatus = async (u: any) => {
+    await supabase.from('app_users').update({ status: u.status === 'aktif' ? 'nonaktif' : 'aktif' }).eq('id', u.id)
+    fetchUsers()
+  }
+
+  const handleDeleteUser = async (u: any) => {
+    if (!confirm(`Hapus pengguna "${u.nama}"?`)) return
+    await supabase.from('app_users').delete().eq('id', u.id)
+    fetchUsers()
+  }
+
+  const handleLogoUpload = (file: File) => {
+    if (file.size > 4 * 1024 * 1024) { alert('Ukuran maksimal 4MB'); return }
+    const reader = new FileReader()
+    reader.onload = () => setSettingsData({ ...settingsData, logo_url: reader.result as string })
+    reader.readAsDataURL(file)
+  }
+
+  // ── Super admin: kelola apotek (companies) ──
+  const fetchCompanies = async () => {
+    const { data } = await supabase.from('companies').select('*').order('created_at', { ascending: false })
+    setCompanies(data || [])
+  }
+
+  const toggleCompanyStatus = async (c: any) => {
+    const next = c.status === 'aktif' ? 'nonaktif' : 'aktif'
+    if (!confirm(`${next === 'aktif' ? 'Aktifkan' : 'Nonaktifkan'} apotek "${c.nama}"?`)) return
+    await supabase.from('companies').update({ status: next }).eq('id', c.id)
+    fetchCompanies()
+  }
+
+  const simpanMasaAktif = async (tanpaBatas: boolean) => {
+    if (!showMasaAktif) return
+    await supabase.from('companies').update({
+      valid_sampai: tanpaBatas ? null : (masaAktifDate || null),
+      // set aktif sekalian saat memperpanjang masa aktif
+      status: 'aktif',
+    }).eq('id', showMasaAktif.id)
+    setShowMasaAktif(null)
+    fetchCompanies()
   }
 
   const fetchStats = async () => {
@@ -260,6 +614,12 @@ export default function Dashboard() {
     const { data: trxHariIni } = await supabase.from('transactions').select('total').gte('created_at', today)
     setStatTrxHariIni(trxHariIni?.length || 0)
     setStatOmzet(trxHariIni?.reduce((a: number, b: any) => a + b.total, 0) || 0)
+    const in60 = new Date(); in60.setDate(new Date().getDate() + 60)
+    const { count: expCount } = await supabase.from('product_batches')
+      .select('*', { count: 'exact', head: true })
+      .lte('expired_date', in60.toISOString().split('T')[0])
+      .gt('stok_batch', 0)
+    setStatExpired(expCount || 0)
   }
 
   const fetchProducts = async () => {
@@ -294,26 +654,234 @@ export default function Dashboard() {
       .order('expired_date')
     setProdukBatches(batches || [])
 
-    // Fetch riwayat keluar (transaksi)
+    // Fetch riwayat keluar (transaksi) — sort by tanggal transaksi di JS
+    // (transaction_items tidak punya kolom created_at sendiri, jadi jangan .order di query)
     const { data: trxOut } = await supabase
       .from('transaction_items')
       .select('*, transactions(nomor_transaksi, created_at, status)')
       .eq('product_id', produk.id)
-      .order('created_at', { ascending: false })
-    setProdukTrxOut(trxOut || [])
+    setProdukTrxOut((trxOut || []).sort((a: any, b: any) =>
+      new Date(b.transactions?.created_at || 0).getTime() - new Date(a.transactions?.created_at || 0).getTime()))
 
-    // Fetch riwayat masuk (PO)
+    // Fetch riwayat masuk (PO) — sort by tanggal terima di JS
     const { data: trxIn } = await supabase
       .from('po_items')
       .select('*, purchase_orders(nomor_po, tanggal_terima, status, suppliers(nama_supplier))')
       .eq('product_id', produk.id)
+    setProdukTrxIn((trxIn || []).sort((a: any, b: any) =>
+      new Date(b.purchase_orders?.tanggal_terima || 0).getTime() - new Date(a.purchase_orders?.tanggal_terima || 0).getTime()))
+  }
+
+  const openTindakLanjut = async (batch: any) => {
+  setShowTindakLanjut(batch)
+  setTindakLanjutMode('pilih')
+  setFormMusnahkan({ tanggal_musnahkan: new Date().toISOString().split('T')[0], qty_musnahkan: batch.stok_batch, metode: 'Dibakar', saksi_1: settingsData.nama_apoteker || '', saksi_2: '', keterangan: '' })
+  setFormRetur({ supplier_id: '', tanggal_retur: new Date().toISOString().split('T')[0], qty_retur: batch.stok_batch, alasan: 'Produk mendekati/melebihi expired date' })
+  setBatchSupplier(null)
+  if (batch.po_id) {
+    const { data: po } = await supabase.from('purchase_orders').select('*, suppliers(*)').eq('id', batch.po_id).single()
+    if (po) setBatchSupplier(po.suppliers)
+  } else {
+    const { data: ps } = await supabase.from('product_suppliers').select('*, suppliers(*)').eq('product_id', batch.product_id).limit(1).single()
+    if (ps) setBatchSupplier(ps.suppliers)
+  }
+}
+
+const submitCloseBatch = async () => {
+  if (!showTindakLanjut) return
+  if (!confirm('Tandai batch ini selesai ditindaklanjuti?\nAlert akan dihapus. Stok total TIDAK dipotong — ini hanya pengingat.')) return
+  // Hanya menghapus batch dari daftar reminder (stok_batch -> 0).
+  // Stok total produk TIDAK diubah di sini (bukan mutasi stok, hanya pengingat).
+  await supabase.from('product_batches').update({ stok_batch: 0 }).eq('id', showTindakLanjut.id)
+  setShowTindakLanjut(null)
+  fetchExpiredAlerts()
+  if (showProdukDetail) openProdukDetail(showProdukDetail)
+  alert('✅ Batch ditandai selesai, alert dihapus. Stok total tidak berubah.')
+}
+
+const submitMusnahkan = async () => {
+  if (!showTindakLanjut) return
+  const { data: ba, error } = await supabase.from('pemusnahan').insert([{ batch_id: showTindakLanjut.id, product_id: showTindakLanjut.product_id, ...formMusnahkan }]).select().single()
+  if (error) { alert('Error: ' + error.message); return }
+  await supabase.from('product_batches').update({ stok_batch: Math.max(0, showTindakLanjut.stok_batch - formMusnahkan.qty_musnahkan) }).eq('id', showTindakLanjut.id)
+  await supabase.from('products').update({ stok_total: Math.max(0, (showProdukDetail?.stok_total || 0) - formMusnahkan.qty_musnahkan) }).eq('id', showTindakLanjut.product_id)
+  setShowTindakLanjut(null)
+  fetchExpiredAlerts()
+  if (showProdukDetail) openProdukDetail(showProdukDetail)
+  const win = window.open('', '_blank', 'width=800,height=900')
+  win?.document.write(`<html><head><title>Berita Acara Pemusnahan</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;font-size:12px;padding:40px;}h1{font-size:16px;text-align:center;font-weight:bold;}h2{font-size:13px;text-align:center;margin-bottom:20px;}.apotek{text-align:center;margin-bottom:16px;}.divider{border-top:2px solid black;margin:12px 0;}table{width:100%;border-collapse:collapse;margin:16px 0;}td{padding:6px 8px;vertical-align:top;}.label{width:35%;font-weight:bold;}.ttd{margin-top:48px;display:flex;justify-content:space-around;}.ttd-box{text-align:center;}.ttd-line{border-top:1px solid black;width:180px;margin:48px auto 4px;}</style></head><body><div class="apotek"><h1>${settingsData.nama_apotek}</h1><p>${settingsData.alamat}</p><p>SIA: ${settingsData.nomor_ijin} | Telp: ${settingsData.nomor_telepon}</p></div><div class="divider"></div><h1>BERITA ACARA PEMUSNAHAN OBAT</h1><h2>No: ${ba.nomor_ba}</h2><table><tr><td class="label">Tanggal Pemusnahan</td><td>: ${new Date(formMusnahkan.tanggal_musnahkan).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'})}</td></tr><tr><td class="label">Nama Produk</td><td>: ${showProdukDetail?.nama_obat}</td></tr><tr><td class="label">No. Batch</td><td>: ${showTindakLanjut.batch_number || '-'}</td></tr><tr><td class="label">Expired Date</td><td>: ${showTindakLanjut.expired_date ? new Date(showTindakLanjut.expired_date).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'}) : '-'}</td></tr><tr><td class="label">Jumlah Dimusnahkan</td><td>: ${formMusnahkan.qty_musnahkan} ${showProdukDetail?.satuan}</td></tr><tr><td class="label">Metode Pemusnahan</td><td>: ${formMusnahkan.metode}</td></tr><tr><td class="label">Keterangan</td><td>: ${formMusnahkan.keterangan || '-'}</td></tr></table><p>Demikian berita acara ini dibuat dengan sebenarnya.</p><div class="ttd"><div class="ttd-box"><p>Apoteker Penanggung Jawab</p><div class="ttd-line"></div><p><b>${settingsData.nama_apoteker || '-'}</b></p><p>SIPA: ${settingsData.nomor_sipa || '-'}</p></div><div class="ttd-box"><p>Saksi 1</p><div class="ttd-line"></div><p><b>${formMusnahkan.saksi_1 || '-'}</b></p></div><div class="ttd-box"><p>Saksi 2</p><div class="ttd-line"></div><p><b>${formMusnahkan.saksi_2 || '-'}</b></p></div></div></body></html>`)
+  win?.document.close(); win?.print()
+}
+
+const submitRetur = async () => {
+  if (!showTindakLanjut) return
+  const supplierId = formRetur.supplier_id || batchSupplier?.id
+  if (!supplierId) { alert('Pilih supplier dulu!'); return }
+  // Retur hanya DIAJUKAN dulu — stok belum berkurang sampai dikonfirmasi.
+  const { error } = await supabase.from('retur_supplier').insert([{ batch_id: showTindakLanjut.id, product_id: showTindakLanjut.product_id, supplier_id: supplierId, qty_retur: formRetur.qty_retur, tanggal_retur: formRetur.tanggal_retur, alasan: formRetur.alasan, status: 'diajukan' }])
+  if (error) { alert('Error: ' + error.message); return }
+  setShowTindakLanjut(null)
+  fetchExpiredAlerts()
+  if (showProdukDetail) openProdukDetail(showProdukDetail)
+  alert('✅ Retur diajukan. Stok belum berubah — konfirmasi di menu Tindak Lanjut → Retur untuk memproses.')
+}
+
+// Konfirmasi retur: stok fisik keluar → kurangi batch & stok total, status jadi 'selesai'
+const konfirmasiRetur = async (row: any) => {
+  if (row.status === 'selesai') { alert('Retur ini sudah dikonfirmasi.'); return }
+  if (!confirm(`Konfirmasi retur ${row.nomor_retur || ''}?\nStok "${row.products?.nama_obat || ''}" akan dikurangi ${row.qty_retur} ${row.products?.satuan || ''}.`)) return
+  const { data: batch } = await supabase.from('product_batches').select('stok_batch').eq('id', row.batch_id).single()
+  const { data: prod } = await supabase.from('products').select('stok_total').eq('id', row.product_id).single()
+  await supabase.from('product_batches').update({ stok_batch: Math.max(0, (batch?.stok_batch || 0) - row.qty_retur) }).eq('id', row.batch_id)
+  await supabase.from('products').update({ stok_total: Math.max(0, (prod?.stok_total || 0) - row.qty_retur) }).eq('id', row.product_id)
+  await supabase.from('retur_supplier').update({ status: 'selesai' }).eq('id', row.id)
+  fetchRiwayatRetur()
+  fetchExpiredAlerts()
+  alert('✅ Retur dikonfirmasi. Stok sudah diperbarui.')
+}
+
+// Batalkan retur yang masih diajukan (stok tidak terpengaruh karena belum dikurangi)
+const batalRetur = async (row: any) => {
+  if (row.status === 'selesai') { alert('Retur sudah selesai, tidak bisa dibatalkan.'); return }
+  if (!confirm(`Batalkan retur ${row.nomor_retur || ''}?`)) return
+  await supabase.from('retur_supplier').update({ status: 'dibatalkan' }).eq('id', row.id)
+  fetchRiwayatRetur()
+  alert('Retur dibatalkan.')
+}
+
+  const fetchRiwayatMusnah = async () => {
+    const { data } = await supabase.from('pemusnahan')
+      .select('*, products(nama_obat, satuan, kode), product_batches(batch_number, expired_date)')
       .order('created_at', { ascending: false })
-    setProdukTrxIn(trxIn || [])
+    setRiwayatMusnah(data || [])
+  }
+
+  const fetchRiwayatRetur = async () => {
+    const { data } = await supabase.from('retur_supplier')
+      .select('*, products(nama_obat, satuan, kode), suppliers(nama_supplier), product_batches(batch_number, expired_date)')
+      .order('created_at', { ascending: false })
+    setRiwayatRetur(data || [])
+  }
+
+  const reprintBA = (row: any) => {
+    const win = window.open('', '_blank', 'width=800,height=900')
+    win?.document.write(`<html><head><title>Berita Acara Pemusnahan</title><style>*{margin:0;padding:0;box-sizing:border-box;}body{font-family:Arial,sans-serif;font-size:12px;padding:40px;}h1{font-size:16px;text-align:center;font-weight:bold;}h2{font-size:13px;text-align:center;margin-bottom:20px;}.apotek{text-align:center;margin-bottom:16px;}.divider{border-top:2px solid black;margin:12px 0;}table{width:100%;border-collapse:collapse;margin:16px 0;}td{padding:6px 8px;vertical-align:top;}.label{width:35%;font-weight:bold;}.ttd{margin-top:48px;display:flex;justify-content:space-around;}.ttd-box{text-align:center;}.ttd-line{border-top:1px solid black;width:180px;margin:48px auto 4px;}</style></head><body><div class="apotek"><h1>${settingsData.nama_apotek || '-'}</h1><p>${settingsData.alamat || ''}</p><p>SIA: ${settingsData.nomor_ijin || '-'} | Telp: ${settingsData.nomor_telepon || '-'}</p></div><div class="divider"></div><h1>BERITA ACARA PEMUSNAHAN OBAT</h1><h2>No: ${row.nomor_ba || '-'}</h2><table><tr><td class="label">Tanggal Pemusnahan</td><td>: ${row.tanggal_musnahkan ? new Date(row.tanggal_musnahkan).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'}) : '-'}</td></tr><tr><td class="label">Nama Produk</td><td>: ${row.products?.nama_obat || '-'}</td></tr><tr><td class="label">No. Batch</td><td>: ${row.product_batches?.batch_number || '-'}</td></tr><tr><td class="label">Expired Date</td><td>: ${row.product_batches?.expired_date ? new Date(row.product_batches.expired_date).toLocaleDateString('id-ID',{day:'numeric',month:'long',year:'numeric'}) : '-'}</td></tr><tr><td class="label">Jumlah Dimusnahkan</td><td>: ${row.qty_musnahkan} ${row.products?.satuan || ''}</td></tr><tr><td class="label">Metode Pemusnahan</td><td>: ${row.metode || '-'}</td></tr><tr><td class="label">Keterangan</td><td>: ${row.keterangan || '-'}</td></tr></table><p>Demikian berita acara ini dibuat dengan sebenarnya.</p><div class="ttd"><div class="ttd-box"><p>Apoteker Penanggung Jawab</p><div class="ttd-line"></div><p><b>${settingsData.nama_apoteker || '-'}</b></p><p>SIPA: ${settingsData.nomor_sipa || '-'}</p></div><div class="ttd-box"><p>Saksi 1</p><div class="ttd-line"></div><p><b>${row.saksi_1 || '-'}</b></p></div><div class="ttd-box"><p>Saksi 2</p><div class="ttd-line"></div><p><b>${row.saksi_2 || '-'}</b></p></div></div></body></html>`)
+    win?.document.close(); win?.print()
   }
 
   const fetchRiwayat = async () => {
     const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false })
     setRiwayat(data || [])
+  }
+
+  const cetakSIPNAP = async () => {
+    const { golongan, bulan, tahun } = sipnapForm
+    const monthStart = new Date(tahun, bulan - 1, 1)
+    const monthEnd = new Date(tahun, bulan, 1)
+    const inMonth = (d: any) => { const t = new Date(d); return t >= monthStart && t < monthEnd }
+    const before = (d: any) => new Date(d) < monthStart
+    const fmt = (d: any) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
+    const fmtED = (d: any) => d ? new Date(d).toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }) : '-'
+
+    const { data: prods } = await supabase.from('products').select('*').eq('kategori', golongan).order('nama_obat')
+    if (!prods || prods.length === 0) { alert('Belum ada produk berkategori ' + golongan + '.'); return }
+    const ids = prods.map((p: any) => p.id)
+
+    const { data: penerimaan } = await supabase.from('po_items')
+      .select('product_id, qty_terima, purchase_orders(tanggal_terima, suppliers(nama_supplier))').in('product_id', ids)
+    const { data: pengeluaran } = await supabase.from('transaction_items')
+      .select('product_id, jumlah, transactions(created_at, nama_pasien, alamat_pasien, kontak_pasien, nomor_resep, status)').in('product_id', ids)
+    const { data: batches } = await supabase.from('product_batches')
+      .select('product_id, batch_number, expired_date').in('product_id', ids)
+
+    let rowsHtml = ''
+    prods.forEach((p: any, idx: number) => {
+      const recAll = (penerimaan || []).filter((r: any) => r.product_id === p.id && r.purchase_orders?.tanggal_terima)
+      const outAll = (pengeluaran || []).filter((r: any) => r.product_id === p.id && r.transactions?.status !== 'dibatalkan' && r.transactions?.created_at)
+
+      const awal = recAll.filter((r: any) => before(r.purchase_orders.tanggal_terima)).reduce((a: number, r: any) => a + (r.qty_terima || 0), 0)
+                 - outAll.filter((r: any) => before(r.transactions.created_at)).reduce((a: number, r: any) => a + (r.jumlah || 0), 0)
+
+      const recMonth = recAll.filter((r: any) => inMonth(r.purchase_orders.tanggal_terima))
+        .map((r: any) => ({ tgl: fmt(r.purchase_orders.tanggal_terima), sumber: r.purchase_orders?.suppliers?.nama_supplier || '-', jml: r.qty_terima || 0 }))
+      const outMonth = outAll.filter((r: any) => inMonth(r.transactions.created_at))
+        .map((r: any) => ({
+          tgl: fmt(r.transactions.created_at), resep: r.transactions?.nomor_resep || '-',
+          pasien: [r.transactions?.nama_pasien, r.transactions?.alamat_pasien, r.transactions?.kontak_pasien].filter(Boolean).join(' / ') || '-',
+          jml: r.jumlah || 0,
+        }))
+
+      const masuk = recMonth.reduce((a: number, r: any) => a + r.jml, 0)
+      const keluar = outMonth.reduce((a: number, r: any) => a + r.jml, 0)
+      const totalP = awal + masuk
+      const akhir = totalP - keluar
+      const batchStr = (batches || []).filter((b: any) => b.product_id === p.id).map((b: any) => `${b.batch_number || '-'} (ED ${fmtED(b.expired_date)})`).join('<br>') || '-'
+
+      const n = Math.max(recMonth.length, outMonth.length, 1)
+      for (let i = 0; i < n; i++) {
+        const rec = recMonth[i]; const out = outMonth[i]
+        rowsHtml += '<tr>'
+        if (i === 0) {
+          rowsHtml += `<td rowspan="${n}" class="c">${idx + 1}</td><td rowspan="${n}" class="l">${p.nama_obat}</td><td rowspan="${n}" class="c">${p.satuan || ''}</td><td rowspan="${n}" class="c">${awal}</td>`
+        }
+        rowsHtml += `<td class="c">${rec ? rec.tgl : ''}</td><td class="l">${rec ? rec.sumber : ''}</td><td class="c">${rec ? rec.jml : ''}</td>`
+        if (i === 0) rowsHtml += `<td rowspan="${n}" class="c">${totalP}</td>`
+        rowsHtml += `<td class="c">${out ? out.tgl + '<br>' + out.resep : ''}</td><td class="l">${out ? out.pasien : ''}</td><td class="c">${out ? out.jml : ''}</td>`
+        if (i === 0) rowsHtml += `<td rowspan="${n}" class="c">${akhir}</td><td rowspan="${n}" class="l">${batchStr}</td>`
+        rowsHtml += '</tr>'
+      }
+    })
+
+    const namaBulan = new Date(tahun, bulan - 1, 1).toLocaleDateString('id-ID', { month: 'long' })
+    const judul = golongan === 'narkotika' ? 'NARKOTIKA' : golongan === 'psikotropika' ? 'PSIKOTROPIKA' : 'PREKURSOR'
+    const tglCetak = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })
+    const win = window.open('', '_blank', 'width=1200,height=800')
+    win?.document.write(`<html><head><title>Laporan SIPNAP ${judul} ${namaBulan} ${tahun}</title><style>
+      @page { size: A4 landscape; margin: 12mm; }
+      *{box-sizing:border-box;} body{font-family:Arial,sans-serif;font-size:11px;color:#000;padding:10px;}
+      h1{text-align:center;font-size:15px;margin-bottom:16px;}
+      .info td{padding:1px 4px;font-size:11px;}
+      table.rep{width:100%;border-collapse:collapse;margin-top:8px;}
+      table.rep th, table.rep td{border:1px solid #000;padding:3px 5px;font-size:10px;}
+      table.rep th{text-align:center;font-weight:bold;}
+      .c{text-align:center;} .l{text-align:left;}
+      .sign{margin-top:40px;width:100%;}
+      .sign .box{width:280px;float:right;text-align:center;}
+      .sign .nm{font-weight:bold;text-decoration:underline;margin-top:56px;}
+    </style></head><body>
+      <h1>LAPORAN PENGGUNAAN ${judul}</h1>
+      <table class="info">
+        <tr><td>Nama Sarana</td><td>: ${settingsData.nama_apotek || '-'}</td></tr>
+        <tr><td>Alamat</td><td>: ${settingsData.alamat || '-'}</td></tr>
+        <tr><td>Bulan/Tahun</td><td>: ${namaBulan} ${tahun}</td></tr>
+      </table>
+      <table class="rep">
+        <thead>
+          <tr>
+            <th rowspan="2">No</th><th rowspan="2">Nama Sediaan</th><th rowspan="2">Satuan</th><th rowspan="2">Persediaan Awal</th>
+            <th colspan="3">Penerimaan</th>
+            <th rowspan="2">Total Persediaan</th>
+            <th colspan="3">Pengeluaran</th>
+            <th rowspan="2">Persediaan Akhir Bulan</th>
+            <th rowspan="2">No. Batch &amp; ED</th>
+          </tr>
+          <tr>
+            <th>Tanggal</th><th>Sumber</th><th>Jumlah</th>
+            <th>Tanggal/No. Resep</th><th>Nama /Alamat Pasien</th><th>Jumlah</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      <div class="sign">
+        <div class="box">
+          <p>${settingsData.kota || ''}${settingsData.kota ? ', ' : ''}${tglCetak}</p>
+          <p>Penanggung Jawab Farmasi</p>
+          <p class="nm">${settingsData.nama_apoteker || '-'}</p>
+          <p>SIPA: ${settingsData.nomor_sipa || '-'}</p>
+        </div>
+      </div>
+    </body></html>`)
+    win?.document.close(); win?.print()
   }
 
   const fetchSuppliers = async () => {
@@ -365,28 +933,137 @@ export default function Dashboard() {
     prekursor: 'Prekursor', alkes: 'Alkes', lainnya: 'Lainnya',
   }
 
+  // Apotek belum diaktivasi / masa aktif habis
+  if (companyBlocked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={AMBIENT}>
+        <div className="bg-white/80 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-8 max-w-md text-center">
+          <div className="relative w-12 h-12 rounded-2xl bg-[#1e3a2c] flex items-center justify-center mx-auto mb-4">
+            <FlaskConical size={24} className="text-white" strokeWidth={1.8} />
+            <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-[#c2632f]" />
+          </div>
+          <h1 className="text-xl font-bold text-[#1c2620] mb-2">
+            {companyBlocked === 'pending' ? 'Menunggu Aktivasi' : 'Masa Aktif Berakhir'}
+          </h1>
+          <p className="text-sm text-[#6b7280] mb-6">
+            {companyBlocked === 'pending'
+              ? 'Akun apotek Anda sudah terdaftar dan sedang menunggu aktivasi dari tim Seawise. Anda akan bisa masuk setelah diaktifkan.'
+              : 'Masa aktif langganan apotek Anda telah berakhir. Hubungi tim Seawise untuk memperpanjang.'}
+          </p>
+          <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/' }}
+            className="w-full bg-[#1e3a2c] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#24462f] transition">
+            Keluar
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // Tunggu role selesai dimuat sebelum render dashboard (hindari flicker menu)
+  if (!currentRole) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center gap-3" style={AMBIENT}>
+        <div className="relative w-12 h-12 rounded-2xl bg-[#1e3a2c] flex items-center justify-center">
+          <FlaskConical size={24} className="text-white" strokeWidth={1.8} />
+          <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-[#c2632f]" />
+        </div>
+        <p className="text-sm text-[#6b7280]">Memuat akses pengguna…</p>
+      </div>
+    )
+  }
+
   return (
     <>
-      {/* Modal Detail Produk */}
+      {/* Modal Tindak Lanjut Batch */}
+{showTindakLanjut && (
+  <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+    <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-[#1e3a2c]">Tindak Lanjut Batch</h2>
+        <p className="text-xs text-[#6b7280]">{showProdukDetail?.nama_obat} · Batch: {showTindakLanjut.batch_number || '-'} · Exp: {showTindakLanjut.expired_date ? new Date(showTindakLanjut.expired_date).toLocaleDateString('id-ID') : '-'} · Stok: {showTindakLanjut.stok_batch}</p>
+      </div>
+      {tindakLanjutMode === 'pilih' && (
+        <div className="space-y-3">
+          <button onClick={submitCloseBatch} className="w-full flex items-start gap-4 p-4 border-2 border-[#d1cdc4] rounded-xl hover:border-[#1e3a2c] hover:bg-[#f5f2eb] transition text-left">
+            <span className="text-2xl">✅</span>
+            <div><p className="font-semibold text-[#1e3a2c] text-sm">Tandai Selesai (Reminder)</p><p className="text-xs text-[#6b7280] mt-0.5">Hapus alert batch ini dari daftar. Stok total <b>tidak</b> dipotong — hanya pengingat.</p></div>
+          </button>
+          <button onClick={() => setTindakLanjutMode('musnahkan')} className="w-full flex items-start gap-4 p-4 border-2 border-[#d1cdc4] rounded-xl hover:border-red-400 hover:bg-red-50 transition text-left">
+            <span className="text-2xl">🔥</span>
+            <div><p className="font-semibold text-[#1e3a2c] text-sm">Musnahkan</p><p className="text-xs text-[#6b7280] mt-0.5">Buat Berita Acara Pemusnahan dan cetak dokumen resmi.</p></div>
+          </button>
+          <button onClick={() => setTindakLanjutMode('retur')} className="w-full flex items-start gap-4 p-4 border-2 border-[#d1cdc4] rounded-xl hover:border-blue-400 hover:bg-blue-50 transition text-left">
+            <span className="text-2xl">↩️</span>
+            <div><p className="font-semibold text-[#1e3a2c] text-sm">Retur ke Supplier</p><p className="text-xs text-[#6b7280] mt-0.5">{batchSupplier ? `Retur ke ${batchSupplier.nama_supplier}` : 'Pilih supplier untuk retur'}</p></div>
+          </button>
+          <button onClick={() => setShowTindakLanjut(null)} className="w-full border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+        </div>
+      )}
+      {tindakLanjutMode === 'musnahkan' && (
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Pemusnahan</label><input type="date" value={formMusnahkan.tanggal_musnahkan} onChange={e => setFormMusnahkan({...formMusnahkan, tanggal_musnahkan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Qty Dimusnahkan</label><input type="number" value={formMusnahkan.qty_musnahkan} max={showTindakLanjut.stok_batch} onChange={e => setFormMusnahkan({...formMusnahkan, qty_musnahkan: +e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          </div>
+          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode</label>
+            <select value={formMusnahkan.metode} onChange={e => setFormMusnahkan({...formMusnahkan, metode: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+              <option>Dibakar</option><option>Dikubur</option><option>Dihancurkan</option><option>Dilarutkan & Dibuang</option><option>Lainnya</option>
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Saksi 1</label><input value={formMusnahkan.saksi_1} onChange={e => setFormMusnahkan({...formMusnahkan, saksi_1: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Saksi 2</label><input value={formMusnahkan.saksi_2} onChange={e => setFormMusnahkan({...formMusnahkan, saksi_2: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          </div>
+          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Keterangan</label><textarea value={formMusnahkan.keterangan} rows={2} onChange={e => setFormMusnahkan({...formMusnahkan, keterangan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          <div className="flex gap-3"><button onClick={() => setTindakLanjutMode('pilih')} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Kembali</button><button onClick={submitMusnahkan} className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium">🔥 Musnahkan & Cetak BA</button></div>
+        </div>
+      )}
+      {tindakLanjutMode === 'retur' && (
+        <div className="space-y-3">
+          {batchSupplier ? (
+            <div className="p-3 bg-[#f5f2eb] rounded-lg"><p className="text-xs text-[#6b7280] mb-0.5">Supplier dari PO asal</p><p className="font-semibold text-[#1e3a2c]">{batchSupplier.nama_supplier}</p></div>
+          ) : (
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Pilih Supplier *</label>
+              <select value={formRetur.supplier_id} onChange={e => setFormRetur({...formRetur, supplier_id: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                <option value="">-- Pilih Supplier --</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.nama_supplier}</option>)}
+              </select>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Retur</label><input type="date" value={formRetur.tanggal_retur} onChange={e => setFormRetur({...formRetur, tanggal_retur: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Qty Retur</label><input type="number" value={formRetur.qty_retur} max={showTindakLanjut.stok_batch} onChange={e => setFormRetur({...formRetur, qty_retur: +e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          </div>
+          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Alasan</label><textarea value={formRetur.alasan} rows={2} onChange={e => setFormRetur({...formRetur, alasan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+            <span>ℹ️</span><span>Retur diajukan dulu. <b>Stok baru berkurang setelah kamu Konfirmasi</b> di menu Tindak Lanjut → Retur.</span>
+          </div>
+          <div className="flex gap-3"><button onClick={() => setTindakLanjutMode('pilih')} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Kembali</button><button onClick={submitRetur} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">↩️ Ajukan Retur</button></div>
+        </div>
+      )}
+    </div>
+  </div>
+)}
+{/* Modal Detail Produk */}
       {showProdukDetail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-3xl shadow-xl max-h-[90vh] flex flex-col">
             {/* Header */}
             <div className="p-6 border-b border-[#f0ede6]">
               <div className="flex items-center justify-between">
                 <div>
-                  <h2 className="text-lg font-bold text-[#1a2e2e]">{showProdukDetail.nama_obat}</h2>
+                  <h2 className="text-lg font-bold text-[#1e3a2c]">{showProdukDetail.nama_obat}</h2>
                   <p className="text-xs text-[#6b7280]">{showProdukDetail.kode} · {showProdukDetail.nama_generik}</p>
                 </div>
                 <button onClick={() => setShowProdukDetail(null)}
-                  className="text-[#9ca3af] hover:text-[#1a2e2e] text-xl font-light">✕</button>
+                  className="text-[#9ca3af] hover:text-[#1e3a2c] text-xl font-light">✕</button>
               </div>
               {/* Tabs */}
               <div className="flex gap-1 mt-4">
                 {['info', 'batch', 'keluar', 'masuk'].map(tab => (
                   <button key={tab} onClick={() => setProdukDetailTab(tab)}
                     className={`px-4 py-1.5 rounded-lg text-xs font-medium transition ${
-                      produkDetailTab === tab ? 'bg-[#1a2e2e] text-[#e8e4d9]' : 'text-[#6b7280] hover:bg-[#f5f2eb]'
+                      produkDetailTab === tab ? 'bg-[#1e3a2c] text-[#e8e4d9]' : 'text-[#6b7280] hover:bg-[#f5f2eb]'
                     }`}>
                     {tab === 'info' ? 'Info Produk' : tab === 'batch' ? 'Batch & Expired' : tab === 'keluar' ? 'Riwayat Keluar' : 'Riwayat Masuk'}
                   </button>
@@ -398,31 +1075,62 @@ export default function Dashboard() {
             <div className="flex-1 overflow-y-auto p-6">
 
               {/* TAB INFO */}
-              {produkDetailTab === 'info' && (
+              {produkDetailTab === 'info' && (() => {
+                const beli = showProdukDetail.harga_beli || 0
+                const jual = showProdukDetail.harga_jual || 0
+                const markup = beli > 0 ? ((jual - beli) / beli) * 100 : 0
+                const margin = jual > 0 ? ((jual - beli) / jual) * 100 : 0
+                return (
                 <div className="grid grid-cols-2 gap-4">
+                  {/* Baris harga — memudahkan atur harga */}
+                  <div className="col-span-2 bg-white border border-[#e2ddd3] rounded-xl p-4">
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="grid grid-cols-4 gap-4 flex-1">
+                        <div>
+                          <p className="text-xs text-[#6b7280] mb-1">• Harga Pokok</p>
+                          <p className="font-semibold text-[#1c2620] text-sm tabular-nums">Rp {beli.toLocaleString('id-ID')}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-[#6b7280] mb-1">• Harga Jual</p>
+                          <p className="font-semibold text-[#1c2620] text-sm tabular-nums">Rp {jual.toLocaleString('id-ID')}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-[#6b7280] mb-1">• Markup</p>
+                          <p className="font-semibold text-[#1c2620] text-sm tabular-nums">{markup.toFixed(2)}%</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-[#6b7280] mb-1">• Margin</p>
+                          <p className="font-semibold text-[#1c2620] text-sm tabular-nums">{margin.toFixed(2)}%</p>
+                        </div>
+                      </div>
+                      <button onClick={() => { setEditProduk(showProdukDetail); fetchProdukSuppliers(showProdukDetail.id) }}
+                        title="Atur harga" className="p-2 rounded-lg text-[#1e3a2c] hover:bg-[#f5f2eb] transition">
+                        <Pencil size={16} />
+                      </button>
+                    </div>
+                  </div>
+
                   {[
                     { label: 'Kode', value: showProdukDetail.kode },
                     { label: 'Kategori', value: showProdukDetail.kategori },
                     { label: 'Satuan', value: showProdukDetail.satuan },
                     { label: 'Isi Kemasan', value: showProdukDetail.isi_kemasan },
-                    { label: 'Harga Beli', value: `Rp ${showProdukDetail.harga_beli?.toLocaleString('id-ID')}` },
-                    { label: 'Harga Jual', value: `Rp ${showProdukDetail.harga_jual?.toLocaleString('id-ID')}` },
                     { label: 'Stok Total', value: showProdukDetail.stok_total },
                     { label: 'Stok Minimum', value: showProdukDetail.stok_minimum },
                     { label: 'Status', value: showProdukDetail.status },
-                    { label: 'Margin', value: `${(((showProdukDetail.harga_jual - showProdukDetail.harga_beli) / showProdukDetail.harga_beli) * 100).toFixed(1)}%` },
                   ].map((item, i) => (
                     <div key={i} className="bg-[#f5f2eb] rounded-lg p-3">
                       <p className="text-xs text-[#6b7280] mb-0.5">{item.label}</p>
-                      <p className="font-medium text-[#1a2e2e] text-sm">{item.value || '-'}</p>
+                      <p className="font-medium text-[#1e3a2c] text-sm">{item.value || '-'}</p>
                     </div>
                   ))}
                   <div className="col-span-2 bg-[#f5f2eb] rounded-lg p-3">
                     <p className="text-xs text-[#6b7280] mb-0.5">Kandungan / Komposisi</p>
-                    <p className="font-medium text-[#1a2e2e] text-sm">{showProdukDetail.kandungan || '-'}</p>
+                    <p className="font-medium text-[#1e3a2c] text-sm">{showProdukDetail.kandungan || '-'}</p>
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {/* TAB BATCH */}
               {produkDetailTab === 'batch' && (
@@ -432,11 +1140,12 @@ export default function Dashboard() {
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="bg-[#1a2e2e]">
+                        <tr className="bg-[#1e3a2c]">
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. Batch</th>
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Expired Date</th>
                           <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Stok Batch</th>
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Status</th>
+                          <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -449,11 +1158,11 @@ export default function Dashboard() {
                           const isWarning = diffDays > 30 && diffDays <= 60
                           return (
                             <tr key={i} className={`border-b border-[#f0ede6] ${isExpired ? 'bg-red-50' : isDanger ? 'bg-red-50' : isWarning ? 'bg-yellow-50' : ''}`}>
-                              <td className="px-3 py-2 font-mono text-xs text-[#1a2e2e]">{b.batch_number || '-'}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-[#1e3a2c]">{b.batch_number || '-'}</td>
                               <td className="px-3 py-2 text-sm">
                                 {b.expired_date ? new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'}) : '-'}
                               </td>
-                              <td className="px-3 py-2 text-center font-medium text-[#1a2e2e]">{b.stok_batch}</td>
+                              <td className="px-3 py-2 text-center font-medium text-[#1e3a2c]">{b.stok_batch}</td>
                               <td className="px-3 py-2">
                                 {isExpired ? (
                                   <span className="px-2 py-0.5 rounded-full text-xs bg-red-200 text-red-800 font-medium">Expired</span>
@@ -463,6 +1172,16 @@ export default function Dashboard() {
                                   <span className="px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700 font-medium">≤ 60 hari</span>
                                 ) : (
                                   <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 font-medium">Aman</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-center">
+                                {b.stok_batch > 0 ? (
+                                  <button onClick={() => openTindakLanjut(b)}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-medium transition ${isExpired || isDanger ? 'bg-red-600 text-white hover:bg-red-700' : 'border border-[#d1cdc4] text-[#1e3a2c] hover:bg-[#f5f2eb]'}`}>
+                                    Tindak Lanjut
+                                  </button>
+                                ) : (
+                                  <span className="text-xs text-[#9ca3af]">—</span>
                                 )}
                               </td>
                             </tr>
@@ -482,7 +1201,7 @@ export default function Dashboard() {
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="bg-[#1a2e2e]">
+                        <tr className="bg-[#1e3a2c]">
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. Transaksi</th>
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Tanggal</th>
                           <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty</th>
@@ -494,13 +1213,13 @@ export default function Dashboard() {
                       <tbody>
                         {produkTrxOut.map((t: any, i: number) => (
                           <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
-                            <td className="px-3 py-2 font-mono text-xs text-[#1a2e2e]">{t.transactions?.nomor_transaksi}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-[#1e3a2c]">{t.transactions?.nomor_transaksi}</td>
                             <td className="px-3 py-2 text-xs text-[#6b7280]">
                               {t.transactions?.created_at ? new Date(t.transactions.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
                             </td>
-                            <td className="px-3 py-2 text-center text-[#1a2e2e] font-medium">{t.jumlah}</td>
+                            <td className="px-3 py-2 text-center text-[#1e3a2c] font-medium">{t.jumlah}</td>
                             <td className="px-3 py-2 text-right text-[#6b7280]">Rp {t.harga_jual?.toLocaleString('id-ID')}</td>
-                            <td className="px-3 py-2 text-right font-medium text-[#1a2e2e]">Rp {t.subtotal?.toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2 text-right font-medium text-[#1e3a2c]">Rp {t.subtotal?.toLocaleString('id-ID')}</td>
                             <td className="px-3 py-2 text-center">
                               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${t.transactions?.status === 'dibatalkan' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'}`}>
                                 {t.transactions?.status}
@@ -510,13 +1229,13 @@ export default function Dashboard() {
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
-                          <td colSpan={2} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">Total Keluar</td>
-                          <td className="px-3 py-2 text-center font-bold text-[#1a2e2e]">
+                        <tr className="border-t-2 border-[#1e3a2c] bg-[#f5f2eb]">
+                          <td colSpan={2} className="px-3 py-2 font-bold text-sm text-[#1e3a2c]">Total Keluar</td>
+                          <td className="px-3 py-2 text-center font-bold text-[#1e3a2c]">
                             {produkTrxOut.filter(t => t.transactions?.status !== 'dibatalkan').reduce((a: number, b: any) => a + b.jumlah, 0)}
                           </td>
                           <td></td>
-                          <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">
+                          <td className="px-3 py-2 text-right font-bold text-[#1e3a2c]">
                             Rp {produkTrxOut.filter(t => t.transactions?.status !== 'dibatalkan').reduce((a: number, b: any) => a + b.subtotal, 0).toLocaleString('id-ID')}
                           </td>
                           <td></td>
@@ -535,7 +1254,7 @@ export default function Dashboard() {
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="bg-[#1a2e2e]">
+                        <tr className="bg-[#1e3a2c]">
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. PO</th>
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Supplier</th>
                           <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Tgl Terima</th>
@@ -547,21 +1266,21 @@ export default function Dashboard() {
                       <tbody>
                         {produkTrxIn.map((t: any, i: number) => (
                           <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
-                            <td className="px-3 py-2 font-mono text-xs text-[#1a2e2e]">{t.purchase_orders?.nomor_po}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-[#1e3a2c]">{t.purchase_orders?.nomor_po}</td>
                             <td className="px-3 py-2 text-xs text-[#6b7280]">{t.purchase_orders?.suppliers?.nama_supplier}</td>
                             <td className="px-3 py-2 text-xs text-[#6b7280]">
                               {t.purchase_orders?.tanggal_terima ? new Date(t.purchase_orders.tanggal_terima).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
                             </td>
                             <td className="px-3 py-2 text-center text-[#6b7280]">{t.qty_pesan}</td>
-                            <td className="px-3 py-2 text-center font-medium text-[#1a2e2e]">{t.qty_terima || 0}</td>
-                            <td className="px-3 py-2 text-right text-[#1a2e2e]">Rp {t.harga_beli?.toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2 text-center font-medium text-[#1e3a2c]">{t.qty_terima || 0}</td>
+                            <td className="px-3 py-2 text-right text-[#1e3a2c]">Rp {t.harga_beli?.toLocaleString('id-ID')}</td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
-                          <td colSpan={4} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">Total Masuk</td>
-                          <td className="px-3 py-2 text-center font-bold text-[#1a2e2e]">
+                        <tr className="border-t-2 border-[#1e3a2c] bg-[#f5f2eb]">
+                          <td colSpan={4} className="px-3 py-2 font-bold text-sm text-[#1e3a2c]">Total Masuk</td>
+                          <td className="px-3 py-2 text-center font-bold text-[#1e3a2c]">
                             {produkTrxIn.reduce((a: number, b: any) => a + (b.qty_terima || 0), 0)}
                           </td>
                           <td></td>
@@ -578,49 +1297,49 @@ export default function Dashboard() {
 
       {/* Modal Edit Produk */}
       {editProduk && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-bold text-[#1a2e2e] mb-4">Edit Produk — {editProduk.kode}</h2>
+            <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Edit Produk — {editProduk.kode}</h2>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Obat</label>
                   <input value={editProduk.nama_obat} onChange={e => setEditProduk({...editProduk, nama_obat: e.target.value})}
-                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Generik</label>
                   <input value={editProduk.nama_generik || ''} onChange={e => setEditProduk({...editProduk, nama_generik: e.target.value})}
-                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
               </div>
               <div>
                 <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kandungan</label>
                 <input value={editProduk.kandungan || ''} onChange={e => setEditProduk({...editProduk, kandungan: e.target.value})}
-                  className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                  className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Beli</label>
                   <input type="number" value={editProduk.harga_beli} onChange={e => setEditProduk({...editProduk, harga_beli: +e.target.value})}
-                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Jual</label>
                   <input type="number" value={editProduk.harga_jual} onChange={e => setEditProduk({...editProduk, harga_jual: +e.target.value})}
-                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Stok</label>
                   <input type="number" value={editProduk.stok_total} onChange={e => setEditProduk({...editProduk, stok_total: +e.target.value})}
-                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Stok Minimum</label>
                   <input type="number" value={editProduk.stok_minimum} onChange={e => setEditProduk({...editProduk, stok_minimum: +e.target.value})}
-                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
               </div>
 
@@ -636,14 +1355,14 @@ export default function Dashboard() {
                       return (
                         <div key={s.id} onClick={() => toggleSupplierProduk(editProduk.id, s.id, isActive)}
                           className={`flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer border transition ${
-                            isActive ? 'border-[#1a2e2e] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'
+                            isActive ? 'border-[#1e3a2c] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'
                           }`}>
                           <div>
-                            <div className="text-sm font-medium text-[#1a2e2e]">{s.nama_supplier}</div>
+                            <div className="text-sm font-medium text-[#1e3a2c]">{s.nama_supplier}</div>
                             <div className="text-xs text-[#9ca3af]">{s.jenis} · {s.kode}</div>
                           </div>
                           <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                            isActive ? 'border-[#1a2e2e] bg-[#1a2e2e]' : 'border-[#d1cdc4]'
+                            isActive ? 'border-[#1e3a2c] bg-[#1e3a2c]' : 'border-[#d1cdc4]'
                           }`}>
                             {isActive && <div className="w-2 h-2 rounded-full bg-white" />}
                           </div>
@@ -665,7 +1384,7 @@ export default function Dashboard() {
                   stok_minimum: editProduk.stok_minimum,
                 }).eq('id', editProduk.id)
                 if (!error) { setEditProduk(null); setProdukSuppliers([]); fetchProducts() }
-              }} className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
+              }} className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
                 Simpan Perubahan
               </button>
             </div>
@@ -675,11 +1394,11 @@ export default function Dashboard() {
 
       {/* Modal Detail Transaksi */}
       {showTrxDetail && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-bold text-[#1a2e2e]">Detail Transaksi</h2>
+                <h2 className="text-lg font-bold text-[#1e3a2c]">Detail Transaksi</h2>
                 <p className="text-xs text-[#6b7280]">{showTrxDetail.nomor_transaksi}</p>
               </div>
               <span className={`px-3 py-1 rounded-full text-xs font-medium ${
@@ -690,25 +1409,25 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 gap-3 mb-4 p-4 bg-[#f5f2eb] rounded-xl text-sm">
               <div>
                 <p className="text-xs text-[#6b7280] mb-0.5">Waktu</p>
-                <p className="font-medium text-[#1a2e2e]">{new Date(showTrxDetail.created_at).toLocaleString('id-ID')}</p>
+                <p className="font-medium text-[#1e3a2c]">{new Date(showTrxDetail.created_at).toLocaleString('id-ID')}</p>
               </div>
               <div>
                 <p className="text-xs text-[#6b7280] mb-0.5">Total</p>
-                <p className="font-bold text-[#1a2e2e]">Rp {showTrxDetail.total?.toLocaleString('id-ID')}</p>
+                <p className="font-bold text-[#1e3a2c]">Rp {showTrxDetail.total?.toLocaleString('id-ID')}</p>
               </div>
               <div>
                 <p className="text-xs text-[#6b7280] mb-0.5">Bayar</p>
-                <p className="font-medium text-[#1a2e2e]">Rp {showTrxDetail.bayar?.toLocaleString('id-ID')}</p>
+                <p className="font-medium text-[#1e3a2c]">Rp {showTrxDetail.bayar?.toLocaleString('id-ID')}</p>
               </div>
               <div>
                 <p className="text-xs text-[#6b7280] mb-0.5">Kembalian</p>
-                <p className="font-medium text-[#1a2e2e]">Rp {showTrxDetail.kembalian?.toLocaleString('id-ID')}</p>
+                <p className="font-medium text-[#1e3a2c]">Rp {showTrxDetail.kembalian?.toLocaleString('id-ID')}</p>
               </div>
             </div>
 
             <table className="w-full text-sm mb-4">
               <thead>
-                <tr className="bg-[#1a2e2e]">
+                <tr className="bg-[#1e3a2c]">
                   <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Produk</th>
                   <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty</th>
                   <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga</th>
@@ -718,15 +1437,15 @@ export default function Dashboard() {
               <tbody>
                 {trxDetailItems.map((item, i) => (
                   <tr key={i} className="border-b border-[#f0ede6]">
-                    <td className="px-3 py-2 font-medium text-[#1a2e2e]">{item.nama_obat}</td>
+                    <td className="px-3 py-2 font-medium text-[#1e3a2c]">{item.nama_obat}</td>
                     <td className="px-3 py-2 text-center text-[#6b7280]">{item.jumlah}</td>
                     <td className="px-3 py-2 text-right text-[#6b7280]">Rp {item.harga_jual?.toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right font-medium text-[#1a2e2e]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
+                    <td className="px-3 py-2 text-right font-medium text-[#1e3a2c]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
                   </tr>
                 ))}
-                <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
-                  <td colSpan={3} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">TOTAL</td>
-                  <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">
+                <tr className="border-t-2 border-[#1e3a2c] bg-[#f5f2eb]">
+                  <td colSpan={3} className="px-3 py-2 font-bold text-sm text-[#1e3a2c]">TOTAL</td>
+                  <td className="px-3 py-2 text-right font-bold text-[#1e3a2c]">
                     Rp {trxDetailItems.reduce((a, b) => a + (b.subtotal || 0), 0).toLocaleString('id-ID')}
                   </td>
                 </tr>
@@ -741,11 +1460,11 @@ export default function Dashboard() {
 
       {/* Modal Detail PO */}
 {showPODetail && (
-  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+  <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-lg font-bold text-[#1a2e2e]">Detail PO</h2>
+          <h2 className="text-lg font-bold text-[#1e3a2c]">Detail PO</h2>
           <p className="text-xs text-[#6b7280]">{showPODetail.nomor_po}</p>
         </div>
         <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusPOColor[showPODetail.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -757,28 +1476,28 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-4 mb-4 p-4 bg-[#f5f2eb] rounded-xl text-sm">
         <div>
           <p className="text-xs text-[#6b7280] mb-0.5">Supplier</p>
-          <p className="font-medium text-[#1a2e2e]">{showPODetail.suppliers?.nama_supplier}</p>
+          <p className="font-medium text-[#1e3a2c]">{showPODetail.suppliers?.nama_supplier}</p>
         </div>
         <div>
           <p className="text-xs text-[#6b7280] mb-0.5">Tanggal PO</p>
-          <p className="font-medium text-[#1a2e2e]">
+          <p className="font-medium text-[#1e3a2c]">
             {new Date(showPODetail.tanggal_po || showPODetail.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'})}
           </p>
         </div>
         <div>
           <p className="text-xs text-[#6b7280] mb-0.5">Tanggal Terima</p>
-          <p className="font-medium text-[#1a2e2e]">
+          <p className="font-medium text-[#1e3a2c]">
             {showPODetail.tanggal_terima ? new Date(showPODetail.tanggal_terima).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'}) : '-'}
           </p>
         </div>
         <div>
           <p className="text-xs text-[#6b7280] mb-0.5">Total Nilai</p>
-          <p className="font-bold text-[#1a2e2e]">Rp {showPODetail.total_nilai?.toLocaleString('id-ID')}</p>
+          <p className="font-bold text-[#1e3a2c]">Rp {showPODetail.total_nilai?.toLocaleString('id-ID')}</p>
         </div>
         {showPODetail.catatan && (
           <div className="col-span-2">
             <p className="text-xs text-[#6b7280] mb-0.5">Catatan</p>
-            <p className="text-[#1a2e2e]">{showPODetail.catatan}</p>
+            <p className="text-[#1e3a2c]">{showPODetail.catatan}</p>
           </div>
         )}
       </div>
@@ -786,7 +1505,7 @@ export default function Dashboard() {
       {/* Tabel Item */}
       <table className="w-full text-sm mb-4">
         <thead>
-          <tr className="bg-[#1a2e2e]">
+          <tr className="bg-[#1e3a2c]">
             <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Produk</th>
             <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Pesan</th>
             <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Terima</th>
@@ -799,7 +1518,7 @@ export default function Dashboard() {
         <tbody>
           {showPODetail.items?.map((item: any, i: number) => (
             <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
-              <td className="px-3 py-2 font-medium text-[#1a2e2e]">{item.nama_produk}</td>
+              <td className="px-3 py-2 font-medium text-[#1e3a2c]">{item.nama_produk}</td>
               <td className="px-3 py-2 text-center text-[#6b7280]">{item.qty_pesan} {item.satuan}</td>
               <td className="px-3 py-2 text-center">
                 <span className={`font-medium ${item.qty_terima < item.qty_pesan ? 'text-yellow-600' : 'text-green-600'}`}>
@@ -810,13 +1529,13 @@ export default function Dashboard() {
               <td className="px-3 py-2 text-[#6b7280] text-xs">
                 {item.expired_date ? new Date(item.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
               </td>
-              <td className="px-3 py-2 text-right text-[#1a2e2e]">Rp {item.harga_beli?.toLocaleString('id-ID')}</td>
-              <td className="px-3 py-2 text-right font-medium text-[#1a2e2e]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
+              <td className="px-3 py-2 text-right text-[#1e3a2c]">Rp {item.harga_beli?.toLocaleString('id-ID')}</td>
+              <td className="px-3 py-2 text-right font-medium text-[#1e3a2c]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
             </tr>
           ))}
-          <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
-            <td colSpan={6} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">TOTAL</td>
-            <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">
+          <tr className="border-t-2 border-[#1e3a2c] bg-[#f5f2eb]">
+            <td colSpan={6} className="px-3 py-2 font-bold text-sm text-[#1e3a2c]">TOTAL</td>
+            <td className="px-3 py-2 text-right font-bold text-[#1e3a2c]">
               Rp {showPODetail.items?.reduce((a: number, b: any) => a + (b.subtotal || 0), 0).toLocaleString('id-ID')}
             </td>
           </tr>
@@ -827,18 +1546,18 @@ export default function Dashboard() {
         <button onClick={() => setShowPODetail(null)}
           className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Tutup</button>
         <button onClick={() => { printPO(showPODetail); }}
-          className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">🖨️ Print PO</button>
+          className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">🖨️ Print PO</button>
       </div>
     </div>
   </div>
 )}
 {/* Modal Penerimaan Barang */}
       {showPenerimaan && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-3xl shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-bold text-[#1a2e2e]">Penerimaan Barang</h2>
+                <h2 className="text-lg font-bold text-[#1e3a2c]">Penerimaan Barang</h2>
                 <p className="text-xs text-[#6b7280]">PO: {showPenerimaan.nomor_po} · {showPenerimaan.suppliers?.nama_supplier}</p>
               </div>
             </div>
@@ -858,7 +1577,7 @@ export default function Dashboard() {
                 {penerimaanItems.map((item, idx) => (
                   <tr key={idx} className="border-t border-[#f0ede6]">
                     <td className="px-3 py-2">
-                      <div className="font-medium text-[#1a2e2e] text-sm">{item.nama_produk}</div>
+                      <div className="font-medium text-[#1e3a2c] text-sm">{item.nama_produk}</div>
                       <div className="text-xs text-[#9ca3af]">{item.satuan}</div>
                     </td>
                     <td className="px-3 py-2 text-center text-[#6b7280]">{item.qty_pesan}</td>
@@ -869,7 +1588,7 @@ export default function Dashboard() {
                           updated[idx].qty_terima = +e.target.value
                           setPenerimaanItems(updated)
                         }}
-                        className="w-16 text-center border border-[#d1cdc4] rounded px-1 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                        className="w-16 text-center border border-[#d1cdc4] rounded px-1 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
                     </td>
                     <td className="px-3 py-2">
                       <input type="text" value={item.batch_number} placeholder="BT-001"
@@ -878,7 +1597,7 @@ export default function Dashboard() {
                           updated[idx].batch_number = e.target.value
                           setPenerimaanItems(updated)
                         }}
-                        className="w-28 border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                        className="w-28 border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
                     </td>
                     <td className="px-3 py-2">
                       <input type="date" value={item.expired_date}
@@ -887,7 +1606,7 @@ export default function Dashboard() {
                           updated[idx].expired_date = e.target.value
                           setPenerimaanItems(updated)
                         }}
-                        className="w-36 border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                        className="w-36 border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
                     </td>
                     <td className="px-3 py-2">
                       <input type="number" value={item.harga_beli}
@@ -896,12 +1615,52 @@ export default function Dashboard() {
                           updated[idx].harga_beli = +e.target.value
                           setPenerimaanItems(updated)
                         }}
-                        className="w-28 text-right border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                        className="w-28 text-right border border-[#d1cdc4] rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+
+            {/* Faktur & Term of Payment */}
+            <div className="border border-[#e2ddd3] rounded-xl p-4 mb-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Receipt size={15} className="text-[#1e3a2c]" />
+                <p className="text-sm font-semibold text-[#1e3a2c]">Faktur Pembelian</p>
+                <span className="text-xs text-[#9ca3af]">(kosongkan jika belum ada faktur)</span>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nomor Faktur</label>
+                  <input value={fakturForm.nomor_faktur} onChange={e => setFakturForm({ ...fakturForm, nomor_faktur: e.target.value })}
+                    placeholder="INV/2026/001" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Faktur</label>
+                  <input type="date" value={fakturForm.tanggal_faktur} onChange={e => setFakturForm({ ...fakturForm, tanggal_faktur: e.target.value })}
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Term of Payment</label>
+                  <select value={fakturForm.term_of_payment} onChange={e => setFakturForm({ ...fakturForm, term_of_payment: +e.target.value })}
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                    <option value={0}>Tunai (0 hari)</option>
+                    <option value={7}>7 hari</option>
+                    <option value={14}>14 hari</option>
+                    <option value={30}>30 hari</option>
+                    <option value={45}>45 hari</option>
+                    <option value={60}>60 hari</option>
+                    <option value={90}>90 hari</option>
+                  </select>
+                </div>
+              </div>
+              {fakturForm.nomor_faktur.trim() && (
+                <p className="text-xs text-[#6b7280] mt-2">
+                  Jatuh tempo: <b className="text-[#1e3a2c]">{(() => { const d = new Date(fakturForm.tanggal_faktur); d.setDate(d.getDate() + (Number(fakturForm.term_of_payment) || 0)); return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) })()}</b>
+                  {' · '}Total: <b className="text-[#1e3a2c]">Rp {penerimaanItems.reduce((a, b) => a + (b.qty_terima > 0 ? b.qty_terima * b.harga_beli : 0), 0).toLocaleString('id-ID')}</b>
+                </p>
+              )}
+            </div>
 
             <div className="bg-[#f5f2eb] rounded-lg p-3 mb-4 text-xs text-[#6b7280]">
               <p>💡 <b>Penerimaan Parsial:</b> Isi qty terima sesuai barang yang datang. Klik "Simpan Parsial" jika ada sisa yang belum datang, atau "Tutup PO" jika selesai.</p>
@@ -917,13 +1676,80 @@ export default function Dashboard() {
                 Batalkan PO
               </button>
               <button onClick={() => submitPenerimaan(false)}
-                className="flex-1 border-2 border-[#1a2e2e] text-[#1a2e2e] py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition">
+                className="flex-1 border-2 border-[#1e3a2c] text-[#1e3a2c] py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition">
                 Simpan Parsial
               </button>
               <button onClick={() => submitPenerimaan(true)}
-                className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+                className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
                 Terima & Tutup PO
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Ubah Masa Aktif (super admin) */}
+      {showMasaAktif && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+            <h2 className="text-lg font-bold text-[#1e3a2c] mb-1">Ubah Masa Aktif</h2>
+            <p className="text-xs text-[#6b7280] mb-4">{showMasaAktif.nama}</p>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Valid sampai</label>
+            <input type="date" value={masaAktifDate} onChange={e => setMasaAktifDate(e.target.value)}
+              className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+            <button onClick={() => simpanMasaAktif(true)} className="mt-2 text-xs text-[#1e3a2c] font-medium hover:underline">
+              Set tanpa batas
+            </button>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setShowMasaAktif(null)} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+              <button onClick={() => simpanMasaAktif(false)} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">Simpan &amp; Aktifkan</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Bayar Faktur */}
+      {showBayar && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <div className="mb-4">
+              <h2 className="text-lg font-bold text-[#1e3a2c]">Bayar Faktur</h2>
+              <p className="text-xs text-[#6b7280]">{showBayar.nomor_faktur} · {showBayar.suppliers?.nama_supplier}</p>
+            </div>
+            <div className="bg-[#f5f2eb] rounded-xl p-4 mb-4 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-[#6b7280]">Jumlah Tagihan</p>
+                <p className="text-xl font-bold text-[#1e3a2c]">Rp {(showBayar.total || 0).toLocaleString('id-ID')}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-[#6b7280]">Jatuh Tempo</p>
+                <p className="text-sm font-medium text-[#1e3a2c]">{showBayar.tanggal_jatuh_tempo ? new Date(showBayar.tanggal_jatuh_tempo).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Bayar</label>
+                  <input type="date" value={bayarForm.tanggal_bayar} onChange={e => setBayarForm({ ...bayarForm, tanggal_bayar: e.target.value })}
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode</label>
+                  <select value={bayarForm.metode_bayar} onChange={e => setBayarForm({ ...bayarForm, metode_bayar: e.target.value })}
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                    <option>Transfer</option><option>Tunai</option><option>Giro</option><option>Cek</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-[#6b7280] mb-1 block">Catatan</label>
+                <input value={bayarForm.catatan_bayar} onChange={e => setBayarForm({ ...bayarForm, catatan_bayar: e.target.value })}
+                  placeholder="No. referensi / bank (opsional)" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => setShowBayar(null)} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+              <button onClick={submitBayar} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">Tandai Lunas</button>
             </div>
           </div>
         </div>
@@ -935,7 +1761,7 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
             <div id="struk-print" className="p-6">
               <div className="text-center mb-4 border-b border-dashed border-gray-300 pb-4">
-                <h2 className="font-bold text-lg text-[#1a2e2e]">{settingsData.nama_apotek}</h2>
+                <h2 className="font-bold text-lg text-[#1e3a2c]">{settingsData.nama_apotek}</h2>
                 <p className="text-xs text-gray-500 mt-1">{settingsData.alamat}</p>
                 <p className="text-xs text-gray-500">{settingsData.nomor_telepon}</p>
                 {settingsData.nomor_ijin && <p className="text-xs text-gray-400 mt-1">SIA: {settingsData.nomor_ijin}</p>}
@@ -947,7 +1773,7 @@ export default function Dashboard() {
               <div className="border-t border-dashed border-gray-300 pt-3 space-y-1.5">
                 {lastItems.map((item, i) => (
                   <div key={i} className="text-xs">
-                    <div className="flex justify-between text-[#1a2e2e] font-medium">
+                    <div className="flex justify-between text-[#1e3a2c] font-medium">
                       <span>{item.nama_obat}</span>
                       <span>Rp {item.subtotal?.toLocaleString('id-ID')}</span>
                     </div>
@@ -956,7 +1782,7 @@ export default function Dashboard() {
                 ))}
               </div>
               <div className="border-t border-dashed border-gray-300 mt-3 pt-3 space-y-1 text-xs">
-                <div className="flex justify-between font-bold text-sm text-[#1a2e2e]">
+                <div className="flex justify-between font-bold text-sm text-[#1e3a2c]">
                   <span>Total</span><span>Rp {lastTrx.total?.toLocaleString('id-ID')}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
@@ -1011,7 +1837,7 @@ export default function Dashboard() {
                 </body></html>`)
                 win?.document.close()
                 win?.print()
-              }} className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
+              }} className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
                 🖨️ Print
               </button>
             </div>
@@ -1019,71 +1845,405 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="min-h-screen bg-[#f5f2eb] flex">
+      <div className="min-h-screen" style={AMBIENT}>
+        {/* Top bar (mobile) */}
+        <div className="md:hidden sticky top-0 z-30 flex items-center gap-3 h-14 px-4 bg-[#1e3a2c] text-white">
+          <button onClick={() => setMobileNavOpen(true)} aria-label="Menu"><Menu size={22} /></button>
+          <span className="font-medium truncate">{isSuper ? 'Super Admin' : (settingsData.nama_apotek || companyName || 'Apotek Saya')}</span>
+        </div>
+
+        <div className="md:flex md:min-h-screen">
+        {/* Backdrop (mobile) */}
+        {mobileNavOpen && <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setMobileNavOpen(false)} />}
         {/* Sidebar */}
-        <div className="w-64 bg-[#1a2e2e] flex flex-col">
-          <div className="px-6 py-5 border-b border-[#2a4040]">
-            <div className="text-[#e8e4d9] font-semibold text-lg">ApotekERP</div>
-            <div className="text-[#4a6e6e] text-xs mt-0.5">Sistem Manajemen Apotek</div>
+        <div className={`${sidebarCollapsed ? 'md:w-20' : 'md:w-64'} w-64 bg-gradient-to-b from-[#1e3a2c] via-[#213829] to-[#2c3320] flex flex-col transition-transform md:transition-[width] duration-200 shrink-0 fixed md:static inset-y-0 left-0 z-50 md:z-auto ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
+          <div className={`${sidebarCollapsed ? 'px-3' : 'px-5'} py-5`}>
+            <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+              <div className="relative w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center shrink-0">
+                <FlaskConical size={20} className="text-white" strokeWidth={1.8} />
+                <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[#c2632f]" />
+              </div>
+              {!sidebarCollapsed && (
+                <div className="min-w-0">
+                  <div className="text-white font-semibold text-sm leading-tight truncate">Seawise Enterprise</div>
+                  <div className="text-[#9db3a5] text-xs truncate">Pharmacy Store Edition</div>
+                </div>
+              )}
+              <button onClick={() => setMobileNavOpen(false)} className="md:hidden ml-auto text-[#9db3a5] hover:text-white" aria-label="Tutup menu"><X size={20} /></button>
+            </div>
+            {/* Toggle minimize */}
+            <button onClick={() => { const nv = !sidebarCollapsed; setSidebarCollapsed(nv); try { localStorage.setItem('sw_sidebar_collapsed', nv ? '1' : '0') } catch {} }}
+              title={sidebarCollapsed ? 'Perbesar sidebar' : 'Perkecil sidebar'}
+              className={`mt-4 w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} px-3 py-2.5 rounded-xl bg-white/[0.07] border border-white/10 text-left hover:bg-white/10 transition`}>
+              {!sidebarCollapsed && <span className="text-[#e8efe9] text-sm font-medium truncate">{isSuper ? 'Super Admin' : (settingsData.nama_apotek || companyName || 'Apotek Saya')}</span>}
+              {sidebarCollapsed ? <PanelLeft size={17} className="text-[#9db3a5]" /> : <PanelLeftClose size={16} className="text-[#9db3a5] shrink-0" />}
+            </button>
           </div>
-          <nav className="flex-1 px-3 py-4 space-y-1">
-            {menuItems.map((item) => {
+          <nav className="flex-1 px-3 py-2 space-y-1">
+            {menuItems.filter(item => allowedPages.includes(item.id)).map((item) => {
               const Icon = item.icon
               return (
-                <button key={item.id} onClick={() => setActivePage(item.id)}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition text-left ${
-                    activePage === item.id ? 'bg-[#2a4040] text-[#e8e4d9] font-medium' : 'text-[#7a9e9e] hover:bg-[#2a4040] hover:text-[#e8e4d9]'
+                <button key={item.id} onClick={() => { setActivePage(item.id); setMobileNavOpen(false) }}
+                  title={sidebarCollapsed ? item.label : undefined}
+                  className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-xl text-sm transition text-left ${
+                    activePage === item.id ? 'bg-white/12 text-white font-medium' : 'text-[#9db3a5] hover:bg-white/[0.07] hover:text-white'
                   }`}>
-                  <Icon size={16} /><span>{item.label}</span>
+                  <Icon size={17} className="shrink-0" />{!sidebarCollapsed && <span className="truncate">{item.label}</span>}
                 </button>
               )
             })}
+            {isSuper && (
+              <button onClick={() => { setActivePage('companies'); setMobileNavOpen(false) }}
+                title={sidebarCollapsed ? 'Companies' : undefined}
+                className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-xl text-sm transition text-left ${
+                  activePage === 'companies' ? 'bg-white/12 text-white font-medium' : 'text-[#9db3a5] hover:bg-white/[0.07] hover:text-white'
+                }`}>
+                <Building2 size={17} className="shrink-0" />{!sidebarCollapsed && <span className="truncate">Companies</span>}
+              </button>
+            )}
           </nav>
-          <div className="px-6 py-4 border-t border-[#2a4040]">
-            <div className="text-[#7a9e9e] text-xs">Masuk sebagai</div>
-            <div className="text-[#e8e4d9] text-sm font-medium mt-0.5">admin@apotek.com</div>
+          <div className={`${sidebarCollapsed ? 'px-3' : 'px-5'} py-4 border-t border-white/10`}>
+            {!sidebarCollapsed && (
+              <>
+                <div className="text-white text-sm font-medium truncate">{authName || settingsData.nama_apotek || 'Pengguna'}</div>
+                <div className="mt-0.5 mb-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/10 text-[#c9d6cc] text-[10px] font-medium">
+                  <ShieldCheck size={11} /> {currentRole ? (ROLE_LABELS[currentRole] || currentRole) : '...'}
+                </div>
+              </>
+            )}
             <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/' }}
-              className="flex items-center gap-1.5 text-[#4a6e6e] text-xs mt-2 hover:text-[#e8e4d9] transition">
-              <LogOut size={12} /> Keluar
+              title="Keluar"
+              className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-1.5'} text-[#9db3a5] text-xs ${sidebarCollapsed ? 'mt-0' : 'mt-2.5'} hover:text-white transition w-full`}>
+              <LogOut size={sidebarCollapsed ? 17 : 13} />{!sidebarCollapsed && 'Keluar'}
             </button>
           </div>
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 p-8">
+        <div className="flex-1 min-w-0 p-4 md:p-8">
+
+          {/* COMPANIES (super admin) */}
+          {activePage === 'companies' && isSuper && (
+            <div>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Companies</h1>
+              <p className="text-[#6b7280] text-sm mb-6">{companies.length} apotek terdaftar</p>
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl overflow-x-auto">
+                {companies.length === 0 ? (
+                  <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada apotek yang mendaftar.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-[#9ca3af] border-b border-[#f0ede6]">
+                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">Company</th>
+                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">Admin</th>
+                        <th className="text-center px-5 py-3 text-xs font-semibold uppercase tracking-wide">User</th>
+                        <th className="text-center px-5 py-3 text-xs font-semibold uppercase tracking-wide">Status</th>
+                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">Valid Sampai</th>
+                        <th className="text-right px-5 py-3 text-xs font-semibold uppercase tracking-wide"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {companies.map((c: any, i: number) => (
+                        <tr key={i} className="border-b border-[#f0ede6] last:border-0 hover:bg-[#faf9f6]">
+                          <td className="px-5 py-4">
+                            <p className="font-semibold text-[#1c2620]">{c.nama}</p>
+                            <p className="text-xs text-[#9ca3af] font-mono">{c.slug || '-'}</p>
+                          </td>
+                          <td className="px-5 py-4">
+                            <p className="text-[#1c2620]">{c.admin_nama || '-'}</p>
+                            <p className="text-xs text-[#9ca3af]">{c.admin_email || '-'}</p>
+                          </td>
+                          <td className="px-5 py-4 text-center text-[#1c2620]">{c.user_count ?? 1}</td>
+                          <td className="px-5 py-4 text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${c.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {c.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-[#6b7280]">
+                            {c.valid_sampai ? new Date(c.valid_sampai).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : 'Tanpa batas'}
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="flex items-center justify-end gap-2">
+                              <button onClick={() => toggleCompanyStatus(c)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${c.status === 'aktif' ? 'border-[#e0b3a0] text-[#a75a34] hover:bg-[#f0dcd2]' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
+                                {c.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}
+                              </button>
+                              <button onClick={() => { setMasaAktifDate(c.valid_sampai || ''); setShowMasaAktif(c) }}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1e3a2c] text-white hover:bg-[#24462f] transition">
+                                Ubah Masa Aktif
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* DASHBOARD */}
           {activePage === 'dashboard' && (
             <div>
-              <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Dashboard</h1>
-              <p className="text-[#6b7280] text-sm mb-8">Ringkasan aktivitas apotek hari ini</p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white rounded-xl p-6 shadow-sm">
-                  <p className="text-sm text-[#6b7280] mb-1">Total Produk</p>
-                  <p className="text-3xl font-bold text-[#1a2e2e]">{statProduk}</p>
-                </div>
-                <div className="bg-white rounded-xl p-6 shadow-sm">
-                  <p className="text-sm text-[#6b7280] mb-1">Transaksi Hari Ini</p>
-                  <p className="text-3xl font-bold text-[#1a2e2e]">{statTrxHariIni}</p>
-                </div>
-                <div className="bg-white rounded-xl p-6 shadow-sm">
-                  <p className="text-sm text-[#6b7280] mb-1">Omzet Hari Ini</p>
-                  <p className="text-2xl font-bold text-[#1a2e2e]">Rp {statOmzet.toLocaleString('id-ID')}</p>
-                </div>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Dashboard</h1>
+              <p className="text-[#6b7280] text-sm mb-8">
+                Halo, <span className="font-semibold text-[#1c2620]">{settingsData.nama_apoteker || 'Apoteker'}</span> 👋 — ringkasan aktivitas apotek hari ini
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+                {[
+                  { label: 'Total Produk', value: statProduk, desc: 'Item terdaftar', Icon: Pill, chip: 'bg-[#dce5db] text-[#2f5741]' },
+                  { label: 'Transaksi Hari Ini', value: statTrxHariIni, desc: 'Penjualan hari ini', Icon: ShoppingCart, chip: 'bg-[#dce5db] text-[#2f5741]' },
+                  { label: 'Expired ≤ 60 Hari', value: statExpired, desc: 'Batch mendekati / lewat exp', Icon: CalendarClock, chip: 'bg-[#f5e6c8] text-[#8a6d1f]' },
+                  { label: 'Omzet Hari Ini', value: `Rp ${statOmzet.toLocaleString('id-ID')}`, desc: 'Total penjualan', Icon: Wallet, chip: 'bg-[#f0dcd2] text-[#a75a34]' },
+                ].map((s, i) => (
+                  <div key={i} className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 ${s.chip}`}>
+                      <s.Icon size={20} strokeWidth={1.9} />
+                    </div>
+                    <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">{s.label}</p>
+                    <p className="text-2xl font-bold text-[#1c2620] leading-none">{s.value}</p>
+                    <p className="text-xs text-[#9ca3af] mt-2">{s.desc}</p>
+                  </div>
+                ))}
               </div>
             </div>
           )}
+
+          {/* TINDAK LANJUT — Riwayat Barang Expired */}
+          {activePage === 'tindaklanjut' && (
+            <div>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Tindak Lanjut Barang Expired</h1>
+              <p className="text-[#6b7280] text-sm mb-6">Riwayat pemusnahan & retur atas batch yang expired / mendekati expired</p>
+
+              {/* Tabs */}
+              <div className="flex gap-1 mb-5">
+                {([
+                  { id: 'musnahkan', label: `Pemusnahan (${riwayatMusnah.length})` },
+                  { id: 'retur', label: `Retur Supplier (${riwayatRetur.length})` },
+                ] as const).map(t => (
+                  <button key={t.id} onClick={() => setTindakLanjutTab(t.id)}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
+                      tindakLanjutTab === t.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'
+                    }`}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl overflow-x-auto">
+                {/* PEMUSNAHAN */}
+                {tindakLanjutTab === 'musnahkan' && (
+                  riwayatMusnah.length === 0 ? (
+                    <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada riwayat pemusnahan</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-[#1e3a2c] text-[#e8efe9]">
+                          <th className="text-left px-4 py-3 text-xs font-medium">No. BA</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Tanggal</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Produk</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Batch / Exp</th>
+                          <th className="text-center px-4 py-3 text-xs font-medium">Qty</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Metode</th>
+                          <th className="text-center px-4 py-3 text-xs font-medium">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {riwayatMusnah.map((r: any, i: number) => (
+                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                            <td className="px-4 py-3 font-mono text-xs text-[#1c2620]">{r.nomor_ba || '-'}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">{r.tanggal_musnahkan ? new Date(r.tanggal_musnahkan).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</td>
+                            <td className="px-4 py-3 text-[#1c2620] font-medium">{r.products?.nama_obat || '-'}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">
+                              {r.product_batches?.batch_number || '-'}
+                              {r.product_batches?.expired_date && <span className="text-[#9ca3af]"> · exp {new Date(r.product_batches.expired_date).toLocaleDateString('id-ID', {month:'short',year:'numeric'})}</span>}
+                            </td>
+                            <td className="px-4 py-3 text-center text-[#1c2620] font-medium">{r.qty_musnahkan} {r.products?.satuan || ''}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">{r.metode || '-'}</td>
+                            <td className="px-4 py-3 text-center">
+                              <button onClick={() => reprintBA(r)}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-[#d1cdc4] text-[#1e3a2c] text-xs font-medium hover:bg-[#f5f2eb] transition">
+                                <Printer size={13} /> Cetak BA
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )
+                )}
+
+                {/* RETUR */}
+                {tindakLanjutTab === 'retur' && (
+                  riwayatRetur.length === 0 ? (
+                    <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada riwayat retur</p>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-[#1e3a2c] text-[#e8efe9]">
+                          <th className="text-left px-4 py-3 text-xs font-medium">No. Retur</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Tanggal</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Produk</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Supplier</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Batch / Exp</th>
+                          <th className="text-center px-4 py-3 text-xs font-medium">Qty</th>
+                          <th className="text-left px-4 py-3 text-xs font-medium">Alasan</th>
+                          <th className="text-center px-4 py-3 text-xs font-medium">Status</th>
+                          <th className="text-center px-4 py-3 text-xs font-medium">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {riwayatRetur.map((r: any, i: number) => (
+                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                            <td className="px-4 py-3 font-mono text-xs text-[#1c2620]">{r.nomor_retur || '-'}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">{r.tanggal_retur ? new Date(r.tanggal_retur).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</td>
+                            <td className="px-4 py-3 text-[#1c2620] font-medium">{r.products?.nama_obat || '-'}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">{r.suppliers?.nama_supplier || '-'}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">
+                              {r.product_batches?.batch_number || '-'}
+                              {r.product_batches?.expired_date && <span className="text-[#9ca3af]"> · exp {new Date(r.product_batches.expired_date).toLocaleDateString('id-ID', {month:'short',year:'numeric'})}</span>}
+                            </td>
+                            <td className="px-4 py-3 text-center text-[#1c2620] font-medium">{r.qty_retur} {r.products?.satuan || ''}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280] max-w-[220px] truncate">{r.alasan || '-'}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                r.status === 'selesai' ? 'bg-green-100 text-green-700'
+                                : r.status === 'dibatalkan' ? 'bg-gray-100 text-gray-500'
+                                : 'bg-yellow-100 text-yellow-700'
+                              }`}>{r.status || 'diajukan'}</span>
+                            </td>
+                            <td className="px-4 py-3">
+                              {(!r.status || r.status === 'diajukan') ? (
+                                <div className="flex items-center justify-center gap-2">
+                                  <button onClick={() => konfirmasiRetur(r)}
+                                    className="px-2.5 py-1 rounded-lg bg-[#1e3a2c] text-white text-xs font-medium hover:bg-[#24462f] transition whitespace-nowrap">
+                                    Konfirmasi
+                                  </button>
+                                  <button onClick={() => batalRetur(r)}
+                                    className="px-2.5 py-1 rounded-lg border border-[#d1cdc4] text-[#6b7280] text-xs font-medium hover:bg-[#f5f2eb] transition">
+                                    Batal
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="text-center text-xs text-[#9ca3af]">—</div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* PEMBAYARAN FAKTUR */}
+          {activePage === 'faktur' && (() => {
+            const today = new Date(); today.setHours(0,0,0,0)
+            const belumLunas = fakturList.filter(f => f.status !== 'lunas')
+            const totalHutang = belumLunas.reduce((a, f) => a + (f.total || 0), 0)
+            const terlambat = belumLunas.filter(f => f.tanggal_jatuh_tempo && new Date(f.tanggal_jatuh_tempo) < today).length
+            return (
+            <div>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Pembayaran Faktur</h1>
+              <p className="text-[#6b7280] text-sm mb-6">Faktur pembelian diurutkan berdasarkan jatuh tempo terdekat</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 bg-[#f0dcd2] text-[#a75a34]"><Wallet size={20} strokeWidth={1.9} /></div>
+                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">Total Hutang Belum Lunas</p>
+                  <p className="text-2xl font-bold text-[#1c2620] leading-none">Rp {totalHutang.toLocaleString('id-ID')}</p>
+                </div>
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 bg-[#f5e6c8] text-[#8a6d1f]"><Receipt size={20} strokeWidth={1.9} /></div>
+                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">Faktur Belum Lunas</p>
+                  <p className="text-2xl font-bold text-[#1c2620] leading-none">{belumLunas.length}</p>
+                </div>
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 bg-red-100 text-red-600"><CalendarClock size={20} strokeWidth={1.9} /></div>
+                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">Lewat Jatuh Tempo</p>
+                  <p className="text-2xl font-bold text-[#1c2620] leading-none">{terlambat}</p>
+                </div>
+              </div>
+
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl overflow-x-auto">
+                {fakturList.length === 0 ? (
+                  <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada faktur. Faktur otomatis tercatat saat penerimaan barang.</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-[#1e3a2c] text-[#e8efe9]">
+                        <th className="text-left px-4 py-3 text-xs font-medium">No. Faktur</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">Supplier</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">PO</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">Tgl Faktur</th>
+                        <th className="text-center px-4 py-3 text-xs font-medium">TOP</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">Jatuh Tempo</th>
+                        <th className="text-right px-4 py-3 text-xs font-medium">Total</th>
+                        <th className="text-center px-4 py-3 text-xs font-medium">Status</th>
+                        <th className="text-center px-4 py-3 text-xs font-medium">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fakturList.map((f: any, i: number) => {
+                        const jt = f.tanggal_jatuh_tempo ? new Date(f.tanggal_jatuh_tempo) : null
+                        const overdue = jt && jt < today && f.status !== 'lunas'
+                        const dueSoon = jt && !overdue && f.status !== 'lunas' && (jt.getTime() - today.getTime()) / 86400000 <= 7
+                        return (
+                          <tr key={i} className={`border-b border-[#f0ede6] hover:bg-[#faf9f6] ${overdue ? 'bg-red-50/60' : ''}`}>
+                            <td className="px-4 py-3 font-mono text-xs text-[#1c2620]">{f.nomor_faktur || '-'}</td>
+                            <td className="px-4 py-3 text-[#1c2620]">{f.suppliers?.nama_supplier || '-'}</td>
+                            <td className="px-4 py-3 font-mono text-xs text-[#6b7280]">{f.purchase_orders?.nomor_po || '-'}</td>
+                            <td className="px-4 py-3 text-xs text-[#6b7280]">{f.tanggal_faktur ? new Date(f.tanggal_faktur).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</td>
+                            <td className="px-4 py-3 text-center text-xs text-[#6b7280]">{f.term_of_payment === 0 ? 'Tunai' : `${f.term_of_payment} hr`}</td>
+                            <td className="px-4 py-3 text-xs">
+                              <span className={overdue ? 'text-red-600 font-semibold' : dueSoon ? 'text-amber-600 font-medium' : 'text-[#6b7280]'}>
+                                {jt ? jt.toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
+                              </span>
+                              {overdue && <span className="block text-[10px] text-red-500">terlambat</span>}
+                            </td>
+                            <td className="px-4 py-3 text-right font-medium text-[#1c2620] tabular-nums">Rp {(f.total || 0).toLocaleString('id-ID')}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${f.status === 'lunas' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                {f.status === 'lunas' ? 'Lunas' : 'Belum Lunas'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              {f.status === 'lunas' ? (
+                                <button onClick={() => cetakBuktiBayar(f)}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#d1cdc4] text-[#1e3a2c] text-xs font-medium hover:bg-[#f5f2eb] transition">
+                                  <Printer size={13} /> Cetak Bukti
+                                </button>
+                              ) : (
+                                <button onClick={() => { setBayarForm({ tanggal_bayar: new Date().toISOString().split('T')[0], metode_bayar: 'Transfer', catatan_bayar: '' }); setShowBayar(f) }}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e3a2c] text-white text-xs font-medium hover:bg-[#24462f] transition">
+                                  <CreditCard size={13} /> Bayar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+            )
+          })()}
 
           {/* PRODUK */}
           {activePage === 'produk' && (
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Produk & Stok</h1>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Produk & Stok</h1>
                   <p className="text-[#6b7280] text-sm">Daftar semua produk obat di apotek</p>
                 </div>
                 <button onClick={() => setShowForm(true)}
-                  className="bg-[#1a2e2e] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+                  className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
                   + Tambah Produk
                 </button>
               </div>
@@ -1107,7 +2267,10 @@ export default function Dashboard() {
                               {merah.map((b: any, i: number) => (
                                 <div key={i} className="flex justify-between text-xs text-red-700">
                                   <span className="font-medium">{b.products?.nama_obat} · Batch: {b.batch_number || '-'}</span>
-                                  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
+                                  <div className="flex items-center gap-3">
+  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
+  <button onClick={() => { setShowProdukDetail(b.products); openTindakLanjut(b) }} className="px-2 py-0.5 bg-red-600 text-white rounded text-xs font-medium whitespace-nowrap">Tindak Lanjut</button>
+</div>
                                 </div>
                               ))}
                             </div>
@@ -1122,7 +2285,10 @@ export default function Dashboard() {
                               {kuning.map((b: any, i: number) => (
                                 <div key={i} className="flex justify-between text-xs text-yellow-700">
                                   <span className="font-medium">{b.products?.nama_obat} · Batch: {b.batch_number || '-'}</span>
-                                  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
+                                  <div className="flex items-center gap-3">
+  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
+  <button onClick={() => { setShowProdukDetail(b.products); openTindakLanjut(b) }} className="px-2 py-0.5 bg-red-600 text-white rounded text-xs font-medium whitespace-nowrap">Tindak Lanjut</button>
+</div>
                                 </div>
                               ))}
                             </div>
@@ -1135,32 +2301,32 @@ export default function Dashboard() {
               )}
 
               {showForm && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
-                    <h2 className="text-lg font-bold text-[#1a2e2e] mb-4">Tambah Produk Baru</h2>
+                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Tambah Produk Baru</h2>
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Obat *</label>
                           <input value={form.nama_obat} onChange={e => setForm({...form, nama_obat: e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Generik</label>
                           <input value={form.nama_generik} onChange={e => setForm({...form, nama_generik: e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                       </div>
                       <div>
                         <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kandungan / Komposisi</label>
                         <input value={form.kandungan} onChange={e => setForm({...form, kandungan: e.target.value})}
-                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kategori</label>
                           <select value={form.kategori} onChange={e => setForm({...form, kategori: e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                             <option value="bebas">Bebas</option>
                             <option value="bebas_terbatas">Bebas Terbatas</option>
                             <option value="keras">Keras</option>
@@ -1175,7 +2341,7 @@ export default function Dashboard() {
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Satuan</label>
                           <select value={form.satuan} onChange={e => setForm({...form, satuan: e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                             <option>Tablet</option><option>Kapsul</option><option>Botol</option>
                             <option>Sachet</option><option>Tube</option><option>Ampul</option><option>Vial</option>
                           </select>
@@ -1185,17 +2351,17 @@ export default function Dashboard() {
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Beli</label>
                           <input type="number" value={form.harga_beli} onChange={e => setForm({...form, harga_beli: +e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Jual</label>
                           <input type="number" value={form.harga_jual} onChange={e => setForm({...form, harga_jual: +e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#6b7280] mb-1 block">Stok Awal</label>
                           <input type="number" value={form.stok_total} onChange={e => setForm({...form, stok_total: +e.target.value})}
-                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                            className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                       </div>
                     </div>
@@ -1203,7 +2369,7 @@ export default function Dashboard() {
                       <button onClick={() => setShowForm(false)}
                         className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
                       <button onClick={handleTambahProduk}
-                        className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Simpan Produk</button>
+                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Simpan Produk</button>
                     </div>
                   </div>
                 </div>
@@ -1212,10 +2378,10 @@ export default function Dashboard() {
               <div className="mb-4">
                 <input type="text" placeholder="Cari nama obat, generik, atau kandungan..."
                   value={search} onChange={(e) => setSearch(e.target.value)}
-                  className="w-full border border-[#d1cdc4] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1a2e2e] placeholder-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                  className="w-full border border-[#d1cdc4] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1e3a2c] placeholder-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
               </div>
 
-              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
@@ -1239,13 +2405,13 @@ export default function Dashboard() {
                         <tr key={p.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
                           <td className="px-4 py-3 text-[#6b7280] font-mono text-xs">{p.kode}</td>
                           <td className="px-4 py-3">
-                            <div className="font-medium text-[#1a2e2e]">{p.nama_obat}</div>
+                            <div className="font-medium text-[#1e3a2c]">{p.nama_obat}</div>
                             <div className="text-xs text-[#9ca3af]">{p.nama_generik}</div>
                           </td>
                           <td className="px-4 py-3 text-[#6b7280]">{kategoriLabel[p.kategori] || p.kategori}</td>
                           <td className="px-4 py-3 text-[#6b7280]">{p.satuan}</td>
-                          <td className="px-4 py-3 text-right text-[#1a2e2e]">Rp {p.harga_jual?.toLocaleString('id-ID')}</td>
-                          <td className={`px-4 py-3 text-right font-medium ${p.stok_total <= p.stok_minimum ? 'text-red-500' : 'text-[#1a2e2e]'}`}>
+                          <td className="px-4 py-3 text-right text-[#1e3a2c]">Rp {p.harga_jual?.toLocaleString('id-ID')}</td>
+                          <td className={`px-4 py-3 text-right font-medium ${p.stok_total <= p.stok_minimum ? 'text-red-500' : 'text-[#1e3a2c]'}`}>
                             {p.stok_total}
                           </td>
                           <td className="px-4 py-3 text-center">
@@ -1262,7 +2428,7 @@ export default function Dashboard() {
                                 setEditProduk(p)
                                 fetchProdukSuppliers(p.id)
                                 if (suppliers.length === 0) fetchSuppliers()
-                              }} className="text-xs text-[#1a2e2e] hover:underline font-medium">Edit</button>
+                              }} className="text-xs text-[#1e3a2c] hover:underline font-medium">Edit</button>
                             </div>
                           </td>
                         </tr>
@@ -1279,16 +2445,16 @@ export default function Dashboard() {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Kasir</h1>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Kasir</h1>
                   <p className="text-[#6b7280] text-sm">Transaksi penjualan obat</p>
                 </div>
               </div>
-              <div className="grid grid-cols-5 gap-6">
-                <div className="col-span-3 space-y-4">
-                  <div className="bg-white rounded-xl shadow-sm p-4">
+              <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6">
+                <div className="lg:col-span-3 space-y-4">
+                  <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-4">
                     <input type="text" placeholder="Cari obat by nama, generik, atau kandungan..."
                       value={search} onChange={(e) => { setSearch(e.target.value); if (e.target.value.length > 1) fetchProducts() }}
-                      className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                      className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                     {search && (
                       <div className="mt-3 space-y-1 max-h-64 overflow-y-auto">
                         {filteredProducts.map(p => (
@@ -1299,16 +2465,16 @@ export default function Dashboard() {
                             setSearch('')
                           }} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-[#f5f2eb] cursor-pointer">
                             <div>
-                              <div className="text-sm font-medium text-[#1a2e2e]">{p.nama_obat}</div>
+                              <div className="text-sm font-medium text-[#1e3a2c]">{p.nama_obat}</div>
                               <div className="text-xs text-[#9ca3af]">{p.nama_generik} · Stok: {p.stok_total}</div>
                             </div>
-                            <div className="text-sm font-medium text-[#1a2e2e]">Rp {p.harga_jual?.toLocaleString('id-ID')}</div>
+                            <div className="text-sm font-medium text-[#1e3a2c]">Rp {p.harga_jual?.toLocaleString('id-ID')}</div>
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
-                  <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-[#f0ede6]">
@@ -1326,22 +2492,22 @@ export default function Dashboard() {
                           keranjang.map(item => (
                             <tr key={item.id} className="border-b border-[#f0ede6]">
                               <td className="px-4 py-3">
-                                <div className="font-medium text-[#1a2e2e]">{item.nama_obat}</div>
+                                <div className="font-medium text-[#1e3a2c]">{item.nama_obat}</div>
                                 <div className="text-xs text-[#9ca3af]">{item.kode}</div>
                               </td>
                               <td className="px-4 py-3">
                                 <div className="flex items-center justify-center gap-2">
                                   <button onClick={() => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: Math.max(1, k.jumlah - 1)} : k))}
-                                    className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1a2e2e] font-bold text-xs">−</button>
+                                    className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1e3a2c] font-bold text-xs">−</button>
                                   <input type="number" min={1} value={item.jumlah}
                                     onChange={e => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: Math.max(1, +e.target.value)} : k))}
-                                    className="w-12 text-center text-sm border border-[#d1cdc4] rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#1a2e2e]" />
+                                    className="w-12 text-center text-sm border border-[#d1cdc4] rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
                                   <button onClick={() => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: k.jumlah + 1} : k))}
-                                    className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1a2e2e] font-bold text-xs">+</button>
+                                    className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1e3a2c] font-bold text-xs">+</button>
                                 </div>
                               </td>
-                              <td className="px-4 py-3 text-right text-[#1a2e2e]">Rp {item.harga_jual?.toLocaleString('id-ID')}</td>
-                              <td className="px-4 py-3 text-right font-medium text-[#1a2e2e]">Rp {(item.harga_jual * item.jumlah)?.toLocaleString('id-ID')}</td>
+                              <td className="px-4 py-3 text-right text-[#1e3a2c]">Rp {item.harga_jual?.toLocaleString('id-ID')}</td>
+                              <td className="px-4 py-3 text-right font-medium text-[#1e3a2c]">Rp {(item.harga_jual * item.jumlah)?.toLocaleString('id-ID')}</td>
                               <td className="px-4 py-3 text-center">
                                 <button onClick={() => setKeranjang(keranjang.filter(k => k.id !== item.id))}
                                   className="text-red-400 hover:text-red-600 text-xs">✕</button>
@@ -1353,23 +2519,38 @@ export default function Dashboard() {
                     </table>
                   </div>
                 </div>
-                <div className="col-span-2">
-                  <div className="bg-white rounded-xl shadow-sm p-5">
-                    <h3 className="font-semibold text-[#1a2e2e] mb-4">Ringkasan Transaksi</h3>
+                <div className="lg:col-span-2">
+                  <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-5">
+                    <h3 className="font-semibold text-[#1e3a2c] mb-4">Ringkasan Transaksi</h3>
                     <div className="space-y-2 mb-4">
                       <div className="flex justify-between text-sm">
                         <span className="text-[#6b7280]">Total Item</span>
-                        <span className="text-[#1a2e2e]">{keranjang.reduce((a, b) => a + b.jumlah, 0)} item</span>
+                        <span className="text-[#1e3a2c]">{keranjang.reduce((a, b) => a + b.jumlah, 0)} item</span>
                       </div>
                       <div className="flex justify-between text-sm font-semibold border-t border-[#f0ede6] pt-2">
-                        <span className="text-[#1a2e2e]">Total</span>
-                        <span className="text-[#1a2e2e]">Rp {keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0).toLocaleString('id-ID')}</span>
+                        <span className="text-[#1e3a2c]">Total</span>
+                        <span className="text-[#1e3a2c]">Rp {keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0).toLocaleString('id-ID')}</span>
                       </div>
                     </div>
+                    {keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori)) && (
+                      <div className="mb-4 p-3 rounded-xl border border-amber-300 bg-amber-50 space-y-2">
+                        <p className="text-xs font-semibold text-amber-800">⚠️ Ada obat Narkotika/Psikotropika/Prekursor — wajib isi data pasien &amp; resep</p>
+                        <input value={pasienForm.nomor_resep} onChange={e => setPasienForm({...pasienForm, nomor_resep: e.target.value})}
+                          placeholder="No. Resep *" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                        <input value={pasienForm.nama_pasien} onChange={e => setPasienForm({...pasienForm, nama_pasien: e.target.value})}
+                          placeholder="Nama Pasien *" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input value={pasienForm.kontak_pasien} onChange={e => setPasienForm({...pasienForm, kontak_pasien: e.target.value})}
+                            placeholder="Kontak (HP)" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                          <input value={pasienForm.alamat_pasien} onChange={e => setPasienForm({...pasienForm, alamat_pasien: e.target.value})}
+                            placeholder="Alamat" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                        </div>
+                      </div>
+                    )}
                     <div className="mb-3">
                       <label className="text-xs font-medium text-[#6b7280] mb-1 block">Bayar (Rp)</label>
                       <input type="number" value={bayar} onChange={e => setBayar(+e.target.value)}
-                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" placeholder="0" />
+                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" placeholder="0" />
                     </div>
                     {bayar > 0 && (
                       <div className="flex justify-between text-sm font-semibold text-green-600 mb-4">
@@ -1382,10 +2563,21 @@ export default function Dashboard() {
                       if (keranjang.length === 0) return alert('Keranjang kosong!')
                       const total = keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)
                       if (bayar < total) return alert('Pembayaran kurang!')
+                      const perluResep = keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori))
+                      if (perluResep && (!pasienForm.nama_pasien.trim() || !pasienForm.nomor_resep.trim())) {
+                        return alert('Obat golongan Narkotika/Psikotropika/Prekursor wajib mengisi Nama Pasien dan No. Resep.')
+                      }
                       const kembalian = bayar - total
                       setProsesLoading(true)
                       try {
-                        const { data: trx, error: trxError } = await supabase.from('transactions').insert([{ total, bayar, kembalian }]).select().single()
+                        const trxPayload: any = { total, bayar, kembalian }
+                        if (perluResep) {
+                          trxPayload.nama_pasien = pasienForm.nama_pasien.trim()
+                          trxPayload.alamat_pasien = pasienForm.alamat_pasien.trim()
+                          trxPayload.kontak_pasien = pasienForm.kontak_pasien.trim()
+                          trxPayload.nomor_resep = pasienForm.nomor_resep.trim()
+                        }
+                        const { data: trx, error: trxError } = await supabase.from('transactions').insert([trxPayload]).select().single()
                         if (trxError) { alert('Error: ' + trxError.message); setProsesLoading(false); return }
                         const items = keranjang.map(k => ({ transaction_id: trx.id, product_id: k.id, nama_obat: k.nama_obat, harga_jual: k.harga_jual, jumlah: k.jumlah, subtotal: k.harga_jual * k.jumlah }))
                         const { error: itemError } = await supabase.from('transaction_items').insert(items)
@@ -1398,9 +2590,10 @@ export default function Dashboard() {
                         setShowStruk(true)
                         setKeranjang([])
                         setBayar(0)
+                        setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
                       } catch(e) { alert('Terjadi kesalahan, coba lagi') }
                       finally { setProsesLoading(false) }
-                    }} className="w-full bg-[#1a2e2e] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition disabled:opacity-50">
+                    }} className="w-full bg-[#1e3a2c] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#24462f] transition disabled:opacity-50">
                       {prosesLoading ? 'Memproses...' : 'Proses Transaksi'}
                     </button>
                     <button onClick={() => { setKeranjang([]); setBayar(0) }}
@@ -1418,26 +2611,26 @@ export default function Dashboard() {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Pembelian</h1>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Pembelian</h1>
                   <p className="text-[#6b7280] text-sm">Purchase Order ke supplier</p>
                 </div>
                 <button onClick={() => setShowPOForm(true)}
-                  className="bg-[#1a2e2e] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+                  className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
                   + Buat PO
                 </button>
               </div>
 
               {showPOForm && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-                    <h2 className="text-lg font-bold text-[#1a2e2e] mb-4">Buat Purchase Order</h2>
+                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Buat Purchase Order</h2>
                     <div className="mb-4">
                       <label className="text-xs font-medium text-[#6b7280] mb-1 block">Pilih Supplier *</label>
                       <select onChange={async (e) => {
                         const s = suppliers.find((x: any) => x.id === e.target.value)
                         setSelectedSupplier(s || null); setPoItems([])
                         if (s) fetchSupplierProducts(s.id)
-                      }} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+                      }} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                         <option value="">-- Pilih Supplier --</option>
                         {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.nama_supplier} ({s.jenis})</option>)}
                       </select>
@@ -1452,9 +2645,9 @@ export default function Dashboard() {
                             {supplierProducts.map((p: any) => (
                               <div key={p.id} onClick={() => addPoItem(p)}
                                 className={`px-3 py-2 rounded-lg border cursor-pointer text-sm transition ${
-                                  poItems.some(i => i.product_id === p.id) ? 'border-[#1a2e2e] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'
+                                  poItems.some(i => i.product_id === p.id) ? 'border-[#1e3a2c] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'
                                 }`}>
-                                <div className="font-medium text-[#1a2e2e]">{p.nama_obat}</div>
+                                <div className="font-medium text-[#1e3a2c]">{p.nama_obat}</div>
                                 <div className="text-xs text-[#9ca3af]">{p.satuan} · Stok: {p.stok_total}</div>
                               </div>
                             ))}
@@ -1479,7 +2672,7 @@ export default function Dashboard() {
                           <tbody>
                             {poItems.map((item, idx) => (
                               <tr key={idx} className="border-t border-[#f0ede6]">
-                                <td className="px-3 py-2 text-[#1a2e2e] font-medium">{item.nama_produk}</td>
+                                <td className="px-3 py-2 text-[#1e3a2c] font-medium">{item.nama_produk}</td>
                                 <td className="px-3 py-2 text-[#6b7280]">{item.satuan}</td>
                                 <td className="px-3 py-2">
                                   <input type="number" min={1} value={item.qty_pesan}
@@ -1491,16 +2684,16 @@ export default function Dashboard() {
                                     onChange={e => updatePoItem(idx, 'harga_beli', +e.target.value)}
                                     className="w-24 text-right border border-[#d1cdc4] rounded px-1 py-0.5 text-sm" />
                                 </td>
-                                <td className="px-3 py-2 text-right text-[#1a2e2e]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
+                                <td className="px-3 py-2 text-right text-[#1e3a2c]">Rp {item.subtotal?.toLocaleString('id-ID')}</td>
                                 <td className="px-2 py-2 text-center">
                                   <button onClick={() => setPoItems(poItems.filter((_, i) => i !== idx))}
                                     className="text-red-400 hover:text-red-600 text-xs">✕</button>
                                 </td>
                               </tr>
                             ))}
-                            <tr className="border-t-2 border-[#1a2e2e] bg-[#f5f2eb]">
-                              <td colSpan={4} className="px-3 py-2 font-bold text-sm text-[#1a2e2e]">TOTAL</td>
-                              <td className="px-3 py-2 text-right font-bold text-[#1a2e2e]">Rp {poItems.reduce((a, b) => a + b.subtotal, 0).toLocaleString('id-ID')}</td>
+                            <tr className="border-t-2 border-[#1e3a2c] bg-[#f5f2eb]">
+                              <td colSpan={4} className="px-3 py-2 font-bold text-sm text-[#1e3a2c]">TOTAL</td>
+                              <td className="px-3 py-2 text-right font-bold text-[#1e3a2c]">Rp {poItems.reduce((a, b) => a + b.subtotal, 0).toLocaleString('id-ID')}</td>
                               <td></td>
                             </tr>
                           </tbody>
@@ -1510,19 +2703,19 @@ export default function Dashboard() {
                     <div className="mb-4">
                       <label className="text-xs font-medium text-[#6b7280] mb-1 block">Catatan (opsional)</label>
                       <textarea value={poCatatan} onChange={e => setPoCatatan(e.target.value)} rows={2}
-                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                     </div>
                     <div className="flex gap-3">
                       <button onClick={() => { setShowPOForm(false); setSelectedSupplier(null); setPoItems([]); setPoCatatan('') }}
                         className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
                       <button onClick={submitPO}
-                        className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Buat PO</button>
+                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Buat PO</button>
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
@@ -1540,18 +2733,18 @@ export default function Dashboard() {
                     ) : (
                       poList.map((po: any) => (
                         <tr key={po.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
-                          <td className="px-4 py-3 font-mono text-xs text-[#1a2e2e] font-medium">{po.nomor_po}</td>
-                          <td className="px-4 py-3 text-[#1a2e2e]">{po.suppliers?.nama_supplier}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-[#1e3a2c] font-medium">{po.nomor_po}</td>
+                          <td className="px-4 py-3 text-[#1e3a2c]">{po.suppliers?.nama_supplier}</td>
                           <td className="px-4 py-3 text-[#6b7280]">
                             {new Date(po.tanggal_po || po.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})}
                           </td>
-                          <td className="px-4 py-3 text-right font-medium text-[#1a2e2e]">Rp {po.total_nilai?.toLocaleString('id-ID')}</td>
+                          <td className="px-4 py-3 text-right font-medium text-[#1e3a2c]">Rp {po.total_nilai?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-center">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusPOColor[po.status] || 'bg-gray-100 text-gray-600'}`}>{po.status}</span>
                           </td>
                           <td className="px-4 py-3 text-center">
                             <div className="flex items-center justify-center gap-2">
-                              <button onClick={() => printPO(po)} className="text-xs text-[#1a2e2e] hover:underline font-medium">Print</button>
+                              <button onClick={() => printPO(po)} className="text-xs text-[#1e3a2c] hover:underline font-medium">Print</button>
 <span className="text-[#d1cdc4]">|</span>
 <button onClick={async () => {
   const { data: items } = await supabase.from('po_items').select('*').eq('po_id', po.id)
@@ -1590,29 +2783,29 @@ export default function Dashboard() {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Supplier</h1>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Supplier</h1>
                   <p className="text-[#6b7280] text-sm">Daftar PBF dan distributor apotek</p>
                 </div>
                 <button onClick={() => setShowSupplierForm(true)}
-                  className="bg-[#1a2e2e] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
+                  className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
                   + Tambah Supplier
                 </button>
               </div>
 
               {showSupplierForm && (
-                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-                    <h2 className="text-lg font-bold text-[#1a2e2e] mb-4">Tambah Supplier</h2>
+                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Tambah Supplier</h2>
                     <div className="space-y-3">
                       <div>
                         <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Supplier *</label>
                         <input value={supplierForm.nama_supplier} onChange={e => setSupplierForm({...supplierForm, nama_supplier: e.target.value})}
-                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div>
                         <label className="text-xs font-medium text-[#6b7280] mb-1 block">Jenis</label>
                         <select value={supplierForm.jenis} onChange={e => setSupplierForm({...supplierForm, jenis: e.target.value})}
-                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]">
+                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                           <option value="PBF">PBF</option>
                           <option value="Subdistributor">Subdistributor</option>
                           <option value="Lainnya">Lainnya</option>
@@ -1621,30 +2814,30 @@ export default function Dashboard() {
                       <div>
                         <label className="text-xs font-medium text-[#6b7280] mb-1 block">Telepon</label>
                         <input value={supplierForm.telepon} onChange={e => setSupplierForm({...supplierForm, telepon: e.target.value})}
-                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div>
                         <label className="text-xs font-medium text-[#6b7280] mb-1 block">Email</label>
                         <input value={supplierForm.email} onChange={e => setSupplierForm({...supplierForm, email: e.target.value})}
-                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                          className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div>
                         <label className="text-xs font-medium text-[#6b7280] mb-1 block">Alamat</label>
                         <textarea value={supplierForm.alamat} onChange={e => setSupplierForm({...supplierForm, alamat: e.target.value})}
-                          rows={2} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                          rows={2} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                     </div>
                     <div className="flex gap-3 mt-5">
                       <button onClick={() => setShowSupplierForm(false)}
                         className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
                       <button onClick={handleTambahSupplier}
-                        className="flex-1 bg-[#1a2e2e] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Simpan</button>
+                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Simpan</button>
                     </div>
                   </div>
                 </div>
               )}
 
-              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
@@ -1662,7 +2855,7 @@ export default function Dashboard() {
                       suppliers.map(s => (
                         <tr key={s.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
                           <td className="px-4 py-3 font-mono text-xs text-[#6b7280]">{s.kode}</td>
-                          <td className="px-4 py-3 font-medium text-[#1a2e2e]">{s.nama_supplier}</td>
+                          <td className="px-4 py-3 font-medium text-[#1e3a2c]">{s.nama_supplier}</td>
                           <td className="px-4 py-3 text-[#6b7280]">{s.jenis}</td>
                           <td className="px-4 py-3 text-[#6b7280]">{s.telepon || '-'}</td>
                           <td className="px-4 py-3 text-center">
@@ -1680,9 +2873,57 @@ export default function Dashboard() {
           {/* LAPORAN */}
           {activePage === 'laporan' && (
             <div>
-              <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Riwayat Transaksi</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Semua transaksi penjualan apotek</p>
-              <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Laporan</h1>
+              <p className="text-[#6b7280] text-sm mb-5">Laporan penjualan &amp; laporan SIPNAP (Narkotika/Psikotropika/Prekursor)</p>
+
+              <div className="flex gap-1 mb-5">
+                {([{id:'penjualan',label:'Penjualan'},{id:'sipnap',label:'SIPNAP'}] as const).map(t => (
+                  <button key={t.id} onClick={() => setLaporanTab(t.id)}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition ${laporanTab === t.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'}`}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {laporanTab === 'sipnap' && (
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-2xl shadow-sm p-6 max-w-2xl">
+                  <h2 className="text-lg font-bold text-[#1c2620] mb-1">Laporan SIPNAP</h2>
+                  <p className="text-sm text-[#6b7280] mb-5">Pilih golongan &amp; periode. Penerimaan diambil dari pembelian supplier, pengeluaran dari transaksi (beserta data pasien &amp; no. resep).</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                    <div>
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Golongan</label>
+                      <select value={sipnapForm.golongan} onChange={e => setSipnapForm({...sipnapForm, golongan: e.target.value})}
+                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                        <option value="narkotika">Narkotika</option>
+                        <option value="psikotropika">Psikotropika</option>
+                        <option value="prekursor">Prekursor</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Bulan</label>
+                      <select value={sipnapForm.bulan} onChange={e => setSipnapForm({...sipnapForm, bulan: +e.target.value})}
+                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                        {['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'].map((m,i) => (
+                          <option key={i} value={i+1}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Tahun</label>
+                      <input type="number" value={sipnapForm.tahun} onChange={e => setSipnapForm({...sipnapForm, tahun: +e.target.value})}
+                        className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                    </div>
+                  </div>
+                  <button onClick={cetakSIPNAP}
+                    className="inline-flex items-center gap-2 bg-[#1e3a2c] text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
+                    <Printer size={15} /> Cetak Laporan SIPNAP
+                  </button>
+                  <p className="text-xs text-[#9ca3af] mt-3">Tanda tangan hanya oleh Apoteker Penanggung Jawab (APJ). Pastikan Nama Apoteker &amp; SIPA sudah diisi di Pengaturan → Data Apoteker.</p>
+                </div>
+              )}
+
+              {laporanTab === 'penjualan' && (<>
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
@@ -1701,11 +2942,11 @@ export default function Dashboard() {
                     ) : (
                       riwayat.map(trx => (
                         <tr key={trx.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
-                          <td className="px-4 py-3 font-mono text-xs text-[#1a2e2e] font-medium">{trx.nomor_transaksi}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-[#1e3a2c] font-medium">{trx.nomor_transaksi}</td>
                           <td className="px-4 py-3 text-[#6b7280]">
                             {new Date(trx.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </td>
-                          <td className="px-4 py-3 text-right font-medium text-[#1a2e2e]">Rp {trx.total?.toLocaleString('id-ID')}</td>
+                          <td className="px-4 py-3 text-right font-medium text-[#1e3a2c]">Rp {trx.total?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-right text-[#6b7280]">Rp {trx.bayar?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-right text-[#6b7280]">Rp {trx.kembalian?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-center">
@@ -1719,7 +2960,7 @@ export default function Dashboard() {
                                 const { data: items } = await supabase.from('transaction_items').select('*').eq('transaction_id', trx.id)
                                 setTrxDetailItems(items || [])
                                 setShowTrxDetail(trx)
-                              }} className="text-xs text-[#1a2e2e] hover:underline font-medium">Detail</button>
+                              }} className="text-xs text-[#1e3a2c] hover:underline font-medium">Detail</button>
                               {trx.status !== 'dibatalkan' && (
                                 <>
                                   <span className="text-[#d1cdc4]">|</span>
@@ -1748,87 +2989,320 @@ export default function Dashboard() {
                 </table>
               </div>
               {riwayat.length > 0 && (
-                <div className="mt-4 bg-white rounded-xl shadow-sm p-4 flex justify-between items-center">
+                <div className="mt-4 bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-4 flex justify-between items-center">
                   <span className="text-sm text-[#6b7280]">Total {riwayat.length} transaksi</span>
-                  <span className="text-sm font-semibold text-[#1a2e2e]">
+                  <span className="text-sm font-semibold text-[#1e3a2c]">
                     Total Omzet: Rp {riwayat.filter(t => t.status !== 'dibatalkan').reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
                   </span>
                 </div>
               )}
+              </>)}
             </div>
           )}
 
           {/* PENGATURAN */}
-          {activePage === 'pengaturan' && (
+          {activePage === 'pengaturan' && (() => {
+            const inputCls = 'w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]'
+            const roleLabels: Record<string,string> = { pemilik:'Pemilik', apoteker:'Apoteker', asisten_apoteker:'Asisten Apoteker', kasir:'Kasir', admin:'Admin' }
+            const settingsMenu = [
+              { id:'profil', label:'Profil Apotek', desc:'Nama, alamat, logo', Icon:Building2 },
+              { id:'pengguna', label:'Manajemen Pengguna', desc:'Akses pengguna, anggota tim', Icon:Users },
+              { id:'apoteker', label:'Data Apoteker', desc:'SIA, SIPA, penanggung jawab', Icon:ShieldCheck },
+            ]
+            return (
             <div>
-              <h1 className="text-2xl font-bold text-[#1a2e2e] mb-1">Pengaturan Apotek</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Data apotek untuk struk, laporan, dan PO</p>
-              <div className="bg-white rounded-xl shadow-sm p-6 max-w-lg">
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nama Apotek</label>
-                    <input value={settingsData.nama_apotek} onChange={e => setSettingsData({...settingsData, nama_apotek: e.target.value})}
-                      className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Alamat</label>
-                    <textarea value={settingsData.alamat} onChange={e => setSettingsData({...settingsData, alamat: e.target.value})}
-                      rows={3} className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor Ijin (SIA)</label>
-                    <input value={settingsData.nomor_ijin} onChange={e => setSettingsData({...settingsData, nomor_ijin: e.target.value})}
-                      className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor Telepon</label>
-                    <input value={settingsData.nomor_telepon} onChange={e => setSettingsData({...settingsData, nomor_telepon: e.target.value})}
-                      className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
-                  </div>
-                  <div className="border-t border-[#f0ede6] pt-4">
-                    <p className="text-xs font-semibold text-[#1a2e2e] mb-3 uppercase tracking-wide">Data Apoteker</p>
-                    <div className="space-y-3">
-                      <div>
-                        <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nama Apoteker</label>
-                        <input value={settingsData.nama_apoteker || ''} onChange={e => setSettingsData({...settingsData, nama_apoteker: e.target.value})}
-                          placeholder="apt. Nama Apoteker, S.Farm"
-                          className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Pengaturan</h1>
+              <p className="text-[#6b7280] text-sm mb-6">Kelola profil apotek, pengguna, dan data penanggung jawab</p>
+              <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
+                {/* Sub-menu kiri */}
+                <div className="space-y-2">
+                  {settingsMenu.map(m => (
+                    <button key={m.id} onClick={() => setSettingsTab(m.id)}
+                      className={`w-full flex items-center gap-3 p-3.5 rounded-xl border text-left transition ${
+                        settingsTab === m.id ? 'bg-white/80 border-[#1e3a2c]/20 shadow-sm' : 'bg-white/50 border-white/60 hover:bg-white/70'
+                      }`}>
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${settingsTab === m.id ? 'bg-[#1e3a2c] text-white' : 'bg-[#eef0ea] text-[#1e3a2c]'}`}>
+                        <m.Icon size={17} />
                       </div>
-                      <div>
-                        <label className="text-sm font-medium text-[#1a2e2e] mb-1 block">Nomor SIPA</label>
-                        <input value={settingsData.nomor_sipa || ''} onChange={e => setSettingsData({...settingsData, nomor_sipa: e.target.value})}
-                          placeholder="SIPA/001/2024/..."
-                          className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a2e2e]" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-[#1c2620]">{m.label}</p>
+                        <p className="text-xs text-[#9ca3af] truncate">{m.desc}</p>
+                      </div>
+                      <ChevronRight size={16} className="text-[#c4c9c2] shrink-0" />
+                    </button>
+                  ))}
+                  <div className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-white/60 bg-white/30 opacity-70">
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-[#eef0ea] text-[#9ca3af] shrink-0"><CreditCard size={17} /></div>
+                    <div className="flex-1"><p className="text-sm font-semibold text-[#6b7280]">Metode Pembayaran</p><p className="text-xs text-[#9ca3af]">Segera hadir</p></div>
+                  </div>
+                </div>
+
+                {/* Konten kanan */}
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-6">
+                  {/* PROFIL APOTEK */}
+                  {settingsTab === 'profil' && (
+                    <div>
+                      <h2 className="text-xl font-bold text-[#1c2620] mb-1">Profil apotek</h2>
+                      <p className="text-sm text-[#6b7280] mb-6">Profil apotek akan ditampilkan pada struk penjualan.</p>
+                      <div className="flex flex-col sm:flex-row gap-6">
+                        {/* Logo */}
+                        <div className="shrink-0">
+                          <div className="w-40 h-40 rounded-xl border-2 border-dashed border-[#d1cdc4] flex items-center justify-center overflow-hidden bg-[#faf9f6]">
+                            {settingsData.logo_url
+                              ? <img src={settingsData.logo_url} alt="Logo" className="w-full h-full object-contain" />
+                              : <Building2 size={44} className="text-[#c4c9c2]" strokeWidth={1.3} />}
+                          </div>
+                          <label className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#d1cdc4] text-sm text-[#1e3a2c] font-medium hover:bg-[#f5f2eb] transition cursor-pointer">
+                            <Upload size={15} /> Ubah logo
+                            <input type="file" accept=".jpg,.jpeg,.png" className="hidden"
+                              onChange={e => e.target.files?.[0] && handleLogoUpload(e.target.files[0])} />
+                          </label>
+                          <p className="text-xs text-[#9ca3af] mt-2 text-center">Maksimal 4MB<br/>Format .JPG .JPEG .PNG</p>
+                        </div>
+                        {/* Fields */}
+                        <div className="flex-1 space-y-4">
+                          <div>
+                            <label className="text-sm font-medium text-[#374151] mb-1 block">Nama apotek</label>
+                            <input value={settingsData.nama_apotek || ''} onChange={e => setSettingsData({...settingsData, nama_apotek: e.target.value})} className={inputCls} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Sektor usaha</label>
+                              <input value={settingsData.sektor_usaha || 'Apotek'} onChange={e => setSettingsData({...settingsData, sektor_usaha: e.target.value})} className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Kota/Kabupaten</label>
+                              <input value={settingsData.kota || ''} onChange={e => setSettingsData({...settingsData, kota: e.target.value})} placeholder="Kab. Gianyar, Bali" className={inputCls} />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium text-[#374151] mb-1 block">Alamat</label>
+                            <textarea value={settingsData.alamat || ''} onChange={e => setSettingsData({...settingsData, alamat: e.target.value})} rows={2} className={inputCls} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">No. telepon</label>
+                              <input value={settingsData.nomor_telepon || ''} onChange={e => setSettingsData({...settingsData, nomor_telepon: e.target.value})} className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Email</label>
+                              <input type="email" value={settingsData.email || ''} onChange={e => setSettingsData({...settingsData, email: e.target.value})} className={inputCls} />
+                            </div>
+                          </div>
+                          <div>
+                            <label className="text-sm font-medium text-[#374151] mb-1 block">Nomor Ijin (SIA)</label>
+                            <input value={settingsData.nomor_ijin || ''} onChange={e => setSettingsData({...settingsData, nomor_ijin: e.target.value})} className={inputCls} />
+                          </div>
+                          <button onClick={saveSettings} className="bg-[#1e3a2c] text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
+                            Simpan Profil
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <button onClick={async () => {
-                    const { data: existing } = await supabase.from('settings').select('id').single()
-                    let error
-                    if (existing) {
-                      const result = await supabase.from('settings').update({
-                        nama_apotek: settingsData.nama_apotek,
-                        alamat: settingsData.alamat,
-                        nomor_ijin: settingsData.nomor_ijin,
-                        nomor_telepon: settingsData.nomor_telepon,
-                        nama_apoteker: settingsData.nama_apoteker,
-                        nomor_sipa: settingsData.nomor_sipa,
-                      }).eq('id', existing.id)
-                      error = result.error
-                    } else {
-                      const result = await supabase.from('settings').insert([settingsData])
-                      error = result.error
-                    }
-                    if (!error) { alert('✅ Data apotek berhasil disimpan!'); fetchSettings() }
-                    else alert('Error: ' + error.message)
-                  }} className="w-full bg-[#1a2e2e] text-[#e8e4d9] py-2.5 rounded-lg text-sm font-medium hover:bg-[#2a4040] transition">
-                    Simpan Perubahan
-                  </button>
+                  )}
+
+                  {/* DATA APOTEKER */}
+                  {settingsTab === 'apoteker' && (
+                    <div className="max-w-md">
+                      <h2 className="text-xl font-bold text-[#1c2620] mb-1">Data apoteker</h2>
+                      <p className="text-sm text-[#6b7280] mb-6">Penanggung jawab yang tertera di PO & Berita Acara.</p>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="text-sm font-medium text-[#374151] mb-1 block">Nama Apoteker</label>
+                          <input value={settingsData.nama_apoteker || ''} onChange={e => setSettingsData({...settingsData, nama_apoteker: e.target.value})} placeholder="apt. Nama Apoteker, S.Farm" className={inputCls} />
+                        </div>
+                        <div>
+                          <label className="text-sm font-medium text-[#374151] mb-1 block">Nomor SIPA</label>
+                          <input value={settingsData.nomor_sipa || ''} onChange={e => setSettingsData({...settingsData, nomor_sipa: e.target.value})} placeholder="SIPA/001/2024/..." className={inputCls} />
+                        </div>
+                        <button onClick={saveSettings} className="bg-[#1e3a2c] text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
+                          Simpan Data Apoteker
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MANAJEMEN PENGGUNA */}
+                  {settingsTab === 'pengguna' && (() => {
+                    const ModuleGrid = ({ selected, onToggle, onClear, onAll }: { selected: string[], onToggle: (id:string)=>void, onClear: ()=>void, onAll: ()=>void }) => (
+                      <div className="border border-[#e2ddd3] rounded-2xl p-5">
+                        <div className="flex items-center justify-between mb-1">
+                          <p className="font-semibold text-[#1c2620]">Akses Modul</p>
+                          <div className="flex gap-3 text-xs">
+                            <button type="button" onClick={onAll} className="text-[#1e3a2c] font-medium hover:underline">Pilih semua</button>
+                            <button type="button" onClick={onClear} className="text-[#6b7280] hover:underline">Hapus semua</button>
+                          </div>
+                        </div>
+                        <p className="text-xs text-[#9ca3af] mb-4">Centang modul yang boleh dibuka user ini.</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                          {menuItems.map(m => {
+                            const checked = selected.includes(m.id)
+                            return (
+                              <button type="button" key={m.id} onClick={() => onToggle(m.id)}
+                                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left text-sm transition ${checked ? 'border-[#1e3a2c] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'}`}>
+                                <span className={`w-4 h-4 rounded flex items-center justify-center shrink-0 ${checked ? 'bg-[#1e3a2c] text-white' : 'border border-[#d1cdc4]'}`}>{checked && <Check size={11} strokeWidth={3} />}</span>
+                                <span className="text-[#1c2620]">{m.label}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+
+                    // ── FORM TAMBAH ──
+                    if (showUserForm) return (
+                      <div>
+                        <button onClick={() => setShowUserForm(false)} className="inline-flex items-center gap-1.5 text-sm text-[#6b7280] hover:text-[#1e3a2c] mb-3"><ArrowLeft size={15} /> Kembali ke Pengguna</button>
+                        <h2 className="text-xl font-bold text-[#1c2620] mb-1">Tambah Pengguna</h2>
+                        <p className="text-sm text-[#6b7280] mb-5">User baru langsung bisa login dengan email &amp; password ini.</p>
+                        <div className="space-y-5">
+                          <div className="border border-[#e2ddd3] rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Email</label>
+                              <input type="email" value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} placeholder="nama@apotek.com" className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Password Awal</label>
+                              <input type="text" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} placeholder="Minimal 6 karakter" className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Nama</label>
+                              <input value={userForm.nama} onChange={e => setUserForm({...userForm, nama: e.target.value})} placeholder="Nama lengkap" className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Role</label>
+                              <select value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value, modules: ROLE_PAGES[e.target.value] || []})} className={inputCls}>
+                                <option value="pemilik">Pemilik</option>
+                                <option value="apoteker">Apoteker</option>
+                                <option value="asisten_apoteker">Asisten Apoteker</option>
+                                <option value="kasir">Kasir</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                            </div>
+                          </div>
+                          <ModuleGrid selected={userForm.modules}
+                            onToggle={(id) => toggleFormModule('new', id)}
+                            onClear={() => setUserForm({...userForm, modules: []})}
+                            onAll={() => setUserForm({...userForm, modules: menuItems.map(m => m.id)})} />
+                          <button onClick={handleTambahUser} disabled={savingUser}
+                            className="w-full bg-[#1e3a2c] text-white py-3 rounded-xl text-sm font-semibold hover:bg-[#24462f] transition disabled:opacity-50">
+                            {savingUser ? 'Membuat…' : 'Buat Pengguna'}
+                          </button>
+                        </div>
+                      </div>
+                    )
+
+                    // ── FORM EDIT ──
+                    if (editUser) return (
+                      <div>
+                        <button onClick={() => setEditUser(null)} className="inline-flex items-center gap-1.5 text-sm text-[#6b7280] hover:text-[#1e3a2c] mb-3"><ArrowLeft size={15} /> Kembali ke Pengguna</button>
+                        <h2 className="text-xl font-bold text-[#1c2620] mb-1">Edit Pengguna</h2>
+                        <p className="text-sm text-[#6b7280] mb-5">Ubah role, status, dan hak akses modul. Email login tidak dapat diubah di sini.</p>
+                        <div className="space-y-5">
+                          <div className="border border-[#e2ddd3] rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Nama</label>
+                              <input value={editUser.nama} onChange={e => setEditUser({...editUser, nama: e.target.value})} className={inputCls} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Email</label>
+                              <input value={editUser.email || ''} disabled className={inputCls + ' bg-[#f5f2eb] text-[#9ca3af]'} />
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Role</label>
+                              <select value={editUser.role} onChange={e => setEditUser({...editUser, role: e.target.value})} className={inputCls}>
+                                <option value="pemilik">Pemilik</option>
+                                <option value="apoteker">Apoteker</option>
+                                <option value="asisten_apoteker">Asisten Apoteker</option>
+                                <option value="kasir">Kasir</option>
+                                <option value="admin">Admin</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">Status</label>
+                              <select value={editUser.status} onChange={e => setEditUser({...editUser, status: e.target.value})} className={inputCls}>
+                                <option value="aktif">Aktif</option>
+                                <option value="nonaktif">Nonaktif</option>
+                              </select>
+                            </div>
+                          </div>
+                          <ModuleGrid selected={Array.isArray(editUser.modules) ? editUser.modules : []}
+                            onToggle={(id) => toggleFormModule('edit', id)}
+                            onClear={() => setEditUser({...editUser, modules: []})}
+                            onAll={() => setEditUser({...editUser, modules: menuItems.map(m => m.id)})} />
+                          <button onClick={handleUpdateUser} className="w-full bg-[#1e3a2c] text-white py-3 rounded-xl text-sm font-semibold hover:bg-[#24462f] transition">
+                            Simpan Perubahan
+                          </button>
+                        </div>
+                      </div>
+                    )
+
+                    // ── LIST ──
+                    return (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <h2 className="text-xl font-bold text-[#1c2620]">Manajemen pengguna</h2>
+                        <button onClick={openTambahUser}
+                          className="inline-flex items-center gap-2 bg-[#1e3a2c] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
+                          <UserPlus size={15} /> Tambah Pengguna
+                        </button>
+                      </div>
+                      <p className="text-sm text-[#6b7280] mb-5">Atur anggota tim apotek beserta hak akses modul masing-masing.</p>
+                      {users.length === 0 ? (
+                        <div className="text-center py-12 text-sm text-[#9ca3af]">
+                          <Users size={32} className="mx-auto mb-2 text-[#c4c9c2]" />
+                          Belum ada pengguna. Klik "Tambah Pengguna" untuk menambah anggota tim.
+                        </div>
+                      ) : (
+                        <div className="border border-[#f0ede6] rounded-xl overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="bg-[#f5f2eb] text-[#6b7280]">
+                                <th className="text-left px-4 py-2.5 text-xs font-medium">Nama</th>
+                                <th className="text-left px-4 py-2.5 text-xs font-medium">Email</th>
+                                <th className="text-left px-4 py-2.5 text-xs font-medium">Role</th>
+                                <th className="text-center px-4 py-2.5 text-xs font-medium">Modul</th>
+                                <th className="text-center px-4 py-2.5 text-xs font-medium">Status</th>
+                                <th className="text-center px-4 py-2.5 text-xs font-medium">Aksi</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {users.map((u:any, i:number) => (
+                                <tr key={i} className="border-t border-[#f0ede6] hover:bg-[#faf9f6]">
+                                  <td className="px-4 py-3 font-medium text-[#1c2620]">{u.nama}</td>
+                                  <td className="px-4 py-3 text-[#6b7280] text-xs">{u.email || '-'}</td>
+                                  <td className="px-4 py-3">
+                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#dce5db] text-[#2f5741]">{roleLabels[u.role] || u.role}</span>
+                                  </td>
+                                  <td className="px-4 py-3 text-center text-xs text-[#6b7280]">{Array.isArray(u.modules) && u.modules.length ? `${u.modules.length} modul` : 'default role'}</td>
+                                  <td className="px-4 py-3 text-center">
+                                    <button onClick={() => toggleUserStatus(u)}
+                                      className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                      {u.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                                    </button>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button onClick={() => setEditUser({ ...u, modules: Array.isArray(u.modules) ? u.modules : [] })} title="Edit" className="p-1.5 rounded-lg text-[#1e3a2c] hover:bg-[#f5f2eb] transition"><Pencil size={14} /></button>
+                                      <button onClick={() => handleDeleteUser(u)} title="Hapus" className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition"><Trash2 size={14} /></button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                    )
+                  })()}
                 </div>
               </div>
             </div>
-          )}
+            )
+          })()}
 
+        </div>
         </div>
       </div>
     </>
