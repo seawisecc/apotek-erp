@@ -88,6 +88,7 @@ export default function Dashboard() {
   const [currentRole, setCurrentRole] = useState<string | null>(null)
   const [currentModules, setCurrentModules] = useState<string[] | null>(null)
   const [isSuper, setIsSuper] = useState(false)
+  const [superViewCompany, setSuperViewCompany] = useState('')
   const [companyName, setCompanyName] = useState('')
   const [companyBlocked, setCompanyBlocked] = useState<'pending' | 'expired' | null>(null)
   const [companies, setCompanies] = useState<any[]>([])
@@ -115,6 +116,24 @@ export default function Dashboard() {
   useEffect(() => { if (activePage === 'pengaturan') fetchUsers() }, [activePage])
   useEffect(() => { if (activePage === 'companies') fetchCompanies() }, [activePage])
   useEffect(() => { if (activePage === 'migrasi' && isSuper) fetchCompanies() }, [activePage, isSuper])
+  useEffect(() => { if (isSuper) fetchCompanies() }, [isSuper])
+  // Saat super admin ganti "lihat sebagai apotek", muat ulang data halaman aktif
+  useEffect(() => {
+    if (!isSuper) return
+    fetchSettings()
+    if (activePage === 'dashboard') fetchStats()
+    else if (activePage === 'produk') { fetchProducts(); fetchExpiredAlerts() }
+    else if (activePage === 'supplier') fetchSuppliers()
+    else if (activePage === 'pembelian') fetchPOList()
+    else if (activePage === 'laporan') fetchRiwayat()
+    else if (activePage === 'faktur') fetchFaktur()
+    else if (activePage === 'tindaklanjut') { fetchRiwayatMusnah(); fetchRiwayatRetur() }
+    else if (activePage === 'pengaturan') fetchUsers()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [superViewCompany])
+
+  // Filter query untuk super admin: batasi ke apotek yang sedang "diintip"
+  const scopeQ = (q: any) => (isSuper && superViewCompany) ? q.eq('company_id', superViewCompany) : q
   useEffect(() => { try { setSidebarCollapsed(localStorage.getItem('sw_sidebar_collapsed') === '1') } catch {} }, [])
 
   // Cek sesi & tentukan role saat masuk dashboard
@@ -195,8 +214,8 @@ export default function Dashboard() {
   const [bayarForm, setBayarForm] = useState({ tanggal_bayar: new Date().toISOString().split('T')[0], metode_bayar: 'Transfer', catatan_bayar: '' })
 
   const fetchFaktur = async () => {
-    const { data } = await supabase.from('faktur')
-      .select('*, suppliers(nama_supplier), purchase_orders(nomor_po)')
+    const { data } = await scopeQ(supabase.from('faktur')
+      .select('*, suppliers(nama_supplier), purchase_orders(nomor_po)'))
     const rows = data || []
     // Urut: belum bayar dulu (by jatuh tempo terdekat), baru yang lunas
     rows.sort((a: any, b: any) => {
@@ -292,7 +311,7 @@ export default function Dashboard() {
   }
 
   const fetchPOList = async () => {
-    const { data } = await supabase.from('purchase_orders').select('*, suppliers(nama_supplier, kode, alamat, telepon)').order('created_at', { ascending: false })
+    const { data } = await scopeQ(supabase.from('purchase_orders').select('*, suppliers(nama_supplier, kode, alamat, telepon)').order('created_at', { ascending: false }))
     setPoList(data || [])
   }
 
@@ -486,7 +505,8 @@ export default function Dashboard() {
   }
 
   const fetchSettings = async () => {
-    const { data } = await supabase.from('settings').select('*').maybeSingle()
+    if (isSuper && !superViewCompany) return // banyak apotek → jangan ambil settings global
+    const { data } = await scopeQ(supabase.from('settings').select('*')).maybeSingle()
     if (data) setSettingsData(data)
   }
 
@@ -513,7 +533,7 @@ export default function Dashboard() {
 
   // ── Manajemen pengguna / role ──
   const fetchUsers = async () => {
-    const { data } = await supabase.from('app_users').select('*').order('created_at', { ascending: true })
+    const { data } = await scopeQ(supabase.from('app_users').select('*').order('created_at', { ascending: true }))
     setUsers(data || [])
   }
 
@@ -808,23 +828,23 @@ export default function Dashboard() {
   }
 
   const fetchStats = async () => {
-    const { count: produkCount } = await supabase.from('products').select('*', { count: 'exact', head: true })
+    const { count: produkCount } = await scopeQ(supabase.from('products').select('*', { count: 'exact', head: true }))
     setStatProduk(produkCount || 0)
     const today = new Date().toISOString().split('T')[0]
-    const { data: trxHariIni } = await supabase.from('transactions').select('total').gte('created_at', today)
+    const { data: trxHariIni } = await scopeQ(supabase.from('transactions').select('total').gte('created_at', today))
     setStatTrxHariIni(trxHariIni?.length || 0)
     setStatOmzet(trxHariIni?.reduce((a: number, b: any) => a + b.total, 0) || 0)
     const in60 = new Date(); in60.setDate(new Date().getDate() + 60)
-    const { count: expCount } = await supabase.from('product_batches')
+    const { count: expCount } = await scopeQ(supabase.from('product_batches')
       .select('*', { count: 'exact', head: true })
       .lte('expired_date', in60.toISOString().split('T')[0])
-      .gt('stok_batch', 0)
+      .gt('stok_batch', 0))
     setStatExpired(expCount || 0)
   }
 
   const fetchProducts = async () => {
     setLoading(true)
-    const { data } = await supabase.from('products').select('*').order('kode')
+    const { data } = await scopeQ(supabase.from('products').select('*').order('kode'))
     setProducts(data || [])
     setLoading(false)
   }
@@ -833,12 +853,12 @@ export default function Dashboard() {
     const today = new Date()
     const in60Days = new Date()
     in60Days.setDate(today.getDate() + 60)
-    const { data } = await supabase
+    const { data } = await scopeQ(supabase
       .from('product_batches')
       .select('*, products(nama_obat, kode)')
       .lte('expired_date', in60Days.toISOString().split('T')[0])
       .gt('stok_batch', 0)
-      .order('expired_date')
+      .order('expired_date'))
     setExpiredAlerts(data || [])
   }
 
@@ -950,16 +970,16 @@ const batalRetur = async (row: any) => {
 }
 
   const fetchRiwayatMusnah = async () => {
-    const { data } = await supabase.from('pemusnahan')
+    const { data } = await scopeQ(supabase.from('pemusnahan')
       .select('*, products(nama_obat, satuan, kode), product_batches(batch_number, expired_date)')
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }))
     setRiwayatMusnah(data || [])
   }
 
   const fetchRiwayatRetur = async () => {
-    const { data } = await supabase.from('retur_supplier')
+    const { data } = await scopeQ(supabase.from('retur_supplier')
       .select('*, products(nama_obat, satuan, kode), suppliers(nama_supplier), product_batches(batch_number, expired_date)')
-      .order('created_at', { ascending: false })
+      .order('created_at', { ascending: false }))
     setRiwayatRetur(data || [])
   }
 
@@ -970,7 +990,7 @@ const batalRetur = async (row: any) => {
   }
 
   const fetchRiwayat = async () => {
-    const { data } = await supabase.from('transactions').select('*').order('created_at', { ascending: false })
+    const { data } = await scopeQ(supabase.from('transactions').select('*').order('created_at', { ascending: false }))
     setRiwayat(data || [])
   }
 
@@ -983,7 +1003,7 @@ const batalRetur = async (row: any) => {
     const fmt = (d: any) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }) : ''
     const fmtED = (d: any) => d ? new Date(d).toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }) : '-'
 
-    const { data: prods } = await supabase.from('products').select('*').eq('kategori', golongan).order('nama_obat')
+    const { data: prods } = await scopeQ(supabase.from('products').select('*').eq('kategori', golongan).order('nama_obat'))
     if (!prods || prods.length === 0) { alert('Belum ada produk berkategori ' + golongan + '.'); return }
     const ids = prods.map((p: any) => p.id)
 
@@ -1085,7 +1105,7 @@ const batalRetur = async (row: any) => {
   }
 
   const fetchSuppliers = async () => {
-    const { data } = await supabase.from('suppliers').select('*').order('kode')
+    const { data } = await scopeQ(supabase.from('suppliers').select('*').order('kode'))
     setSuppliers(data || [])
   }
 
@@ -2049,7 +2069,7 @@ const batalRetur = async (row: any) => {
         {/* Top bar (mobile) */}
         <div className="md:hidden sticky top-0 z-30 flex items-center gap-3 h-14 px-4 bg-[#1e3a2c] text-white">
           <button onClick={() => setMobileNavOpen(true)} aria-label="Menu"><Menu size={22} /></button>
-          <span className="font-medium truncate">{isSuper ? 'Super Admin' : (settingsData.nama_apotek || companyName || 'Apotek Saya')}</span>
+          <span className="font-medium truncate">{isSuper ? (companies.find((c: any) => c.id === superViewCompany)?.nama || 'Super Admin') : (settingsData.nama_apotek || companyName || 'Apotek Saya')}</span>
         </div>
 
         <div className="md:flex md:min-h-screen">
@@ -2075,9 +2095,20 @@ const batalRetur = async (row: any) => {
             <button onClick={() => { const nv = !sidebarCollapsed; setSidebarCollapsed(nv); try { localStorage.setItem('sw_sidebar_collapsed', nv ? '1' : '0') } catch {} }}
               title={sidebarCollapsed ? 'Perbesar sidebar' : 'Perkecil sidebar'}
               className={`mt-4 w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'justify-between'} px-3 py-2.5 rounded-xl bg-white/[0.07] border border-white/10 text-left hover:bg-white/10 transition`}>
-              {!sidebarCollapsed && <span className="text-[#e8efe9] text-sm font-medium truncate">{isSuper ? 'Super Admin' : (settingsData.nama_apotek || companyName || 'Apotek Saya')}</span>}
+              {!sidebarCollapsed && <span className="text-[#e8efe9] text-sm font-medium truncate">{isSuper ? (companies.find((c: any) => c.id === superViewCompany)?.nama || 'Super Admin') : (settingsData.nama_apotek || companyName || 'Apotek Saya')}</span>}
               {sidebarCollapsed ? <PanelLeft size={17} className="text-[#9db3a5]" /> : <PanelLeftClose size={16} className="text-[#9db3a5] shrink-0" />}
             </button>
+            {/* Super admin: lihat sebagai apotek */}
+            {isSuper && !sidebarCollapsed && (
+              <div className="mt-2">
+                <label className="text-[10px] uppercase tracking-wide text-[#9db3a5] mb-1 block">Lihat sebagai apotek</label>
+                <select value={superViewCompany} onChange={e => setSuperViewCompany(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-white/[0.07] border border-white/10 text-[#e8efe9] text-sm focus:outline-none">
+                  <option value="" className="text-black">— Semua apotek —</option>
+                  {companies.map((c: any) => <option key={c.id} value={c.id} className="text-black">{c.nama}</option>)}
+                </select>
+              </div>
+            )}
           </div>
           <nav className="flex-1 px-3 py-2 space-y-1">
             {menuItems.filter(item => allowedPages.includes(item.id)).map((item) => {
