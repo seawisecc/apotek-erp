@@ -9,18 +9,19 @@ import {
 } from 'lucide-react'
 import { supabase, createSignupClient } from '../../lib/supabase'
 import { AMBIENT } from '../../lib/theme'
+import { useLang, LangToggle } from '../../lib/i18n'
 
 const menuItems = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'produk', label: 'Produk & Stok', icon: Pill },
-  { id: 'transaksi', label: 'Transaksi', icon: ShoppingCart },
-  { id: 'pembelian', label: 'Pembelian', icon: PackageOpen },
-  { id: 'faktur', label: 'Pembayaran Faktur', icon: Receipt },
-  { id: 'supplier', label: 'Supplier', icon: Truck },
-  { id: 'tindaklanjut', label: 'Tindak Lanjut', icon: ClipboardList },
-  { id: 'laporan', label: 'Laporan', icon: BarChart2 },
-  { id: 'migrasi', label: 'Migrasi Data', icon: Database },
-  { id: 'pengaturan', label: 'Pengaturan', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', en: 'Dashboard', icon: LayoutDashboard },
+  { id: 'produk', label: 'Produk & Stok', en: 'Products & Stock', icon: Pill },
+  { id: 'transaksi', label: 'Transaksi', en: 'Sales', icon: ShoppingCart },
+  { id: 'pembelian', label: 'Pembelian', en: 'Purchasing', icon: PackageOpen },
+  { id: 'faktur', label: 'Pembayaran Faktur', en: 'Invoice Payments', icon: Receipt },
+  { id: 'supplier', label: 'Supplier', en: 'Suppliers', icon: Truck },
+  { id: 'tindaklanjut', label: 'Tindak Lanjut', en: 'Follow-up', icon: ClipboardList },
+  { id: 'laporan', label: 'Laporan', en: 'Reports', icon: BarChart2 },
+  { id: 'migrasi', label: 'Migrasi Data', en: 'Data Migration', icon: Database },
+  { id: 'pengaturan', label: 'Pengaturan', en: 'Settings', icon: Settings },
 ]
 
 // Hak akses per role: daftar id halaman yang boleh dibuka
@@ -34,6 +35,7 @@ const ROLE_PAGES: Record<string, string[]> = {
 const ROLE_LABELS: Record<string,string> = { pemilik:'Pemilik', apoteker:'Apoteker', asisten_apoteker:'Asisten Apoteker', kasir:'Kasir', admin:'Admin', superadmin:'Super Admin' }
 
 export default function Dashboard() {
+  const { t, lang } = useLang()
   const [activePage, setActivePage] = useState('dashboard')
   const [products, setProducts] = useState<any[]>([])
   const [search, setSearch] = useState('')
@@ -2119,7 +2121,7 @@ const batalRetur = async (row: any) => {
                   className={`w-full flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'} px-3 py-2.5 rounded-xl text-sm transition text-left ${
                     activePage === item.id ? 'bg-white/12 text-white font-medium' : 'text-[#9db3a5] hover:bg-white/[0.07] hover:text-white'
                   }`}>
-                  <Icon size={17} className="shrink-0" />{!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                  <Icon size={17} className="shrink-0" />{!sidebarCollapsed && <span className="truncate">{lang === 'en' ? item.en : item.label}</span>}
                 </button>
               )
             })}
@@ -2143,10 +2145,11 @@ const batalRetur = async (row: any) => {
               </>
             )}
             <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/' }}
-              title="Keluar"
+              title={t('Keluar', 'Sign out')}
               className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-1.5'} text-[#9db3a5] text-xs ${sidebarCollapsed ? 'mt-0' : 'mt-2.5'} hover:text-white transition w-full`}>
-              <LogOut size={sidebarCollapsed ? 17 : 13} />{!sidebarCollapsed && 'Keluar'}
+              <LogOut size={sidebarCollapsed ? 17 : 13} />{!sidebarCollapsed && t('Keluar', 'Sign out')}
             </button>
+            {!sidebarCollapsed && <div className="mt-3"><LangToggle dark /></div>}
           </div>
         </div>
 
