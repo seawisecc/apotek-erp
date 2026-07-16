@@ -112,8 +112,11 @@ export default function Auth() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6" style={AMBIENT}>
+    <div className="min-h-screen flex items-center justify-center p-4 sm:p-6 relative" style={AMBIENT}>
       <style dangerouslySetInnerHTML={{ __html: AUTH_CSS }} />
+      <a href="/kenapa" className="absolute top-4 right-5 sm:top-6 sm:right-8 inline-flex items-center gap-1.5 text-sm font-medium text-[#1e3a2c] bg-white/70 backdrop-blur-sm border border-black/5 px-3.5 py-2 rounded-full shadow-sm hover:bg-white transition">
+        ✨ Kenapa aplikasi ini?
+      </a>
       <div className={`sw-auth ${mode === 'signup' ? 'active' : ''}`}>
 
         {/* ── Login form ── */}
