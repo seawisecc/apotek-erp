@@ -5,7 +5,7 @@ import {
   LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut, Settings, Truck,
   FlaskConical, Wallet, CalendarClock, ClipboardList, Printer, Pencil,
   Receipt, CreditCard, Building2, Users, PanelLeftClose, PanelLeft, ChevronRight,
-  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X, Download, Database
+  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X, Download, Database, HeartPulse
 } from 'lucide-react'
 import { supabase, createSignupClient } from '../../lib/supabase'
 import { AMBIENT } from '../../lib/theme'
@@ -15,22 +15,22 @@ const menuItems = [
   { id: 'dashboard', label: 'Dashboard', en: 'Dashboard', icon: LayoutDashboard },
   { id: 'produk', label: 'Produk & Stok', en: 'Products & Stock', icon: Pill },
   { id: 'transaksi', label: 'Transaksi', en: 'Sales', icon: ShoppingCart },
+  { id: 'layanan', label: 'Layanan Jasa', en: 'Services', icon: HeartPulse },
   { id: 'pembelian', label: 'Pembelian', en: 'Purchasing', icon: PackageOpen },
   { id: 'faktur', label: 'Pembayaran Faktur', en: 'Invoice Payments', icon: Receipt },
   { id: 'supplier', label: 'Supplier', en: 'Suppliers', icon: Truck },
   { id: 'tindaklanjut', label: 'Tindak Lanjut', en: 'Follow-up', icon: ClipboardList },
   { id: 'laporan', label: 'Laporan', en: 'Reports', icon: BarChart2 },
-  { id: 'migrasi', label: 'Migrasi Data', en: 'Data Migration', icon: Database },
   { id: 'pengaturan', label: 'Pengaturan', en: 'Settings', icon: Settings },
 ]
 
 // Hak akses per role: daftar id halaman yang boleh dibuka
 const ROLE_PAGES: Record<string, string[]> = {
-  pemilik:          ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','migrasi','pengaturan'],
-  admin:            ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan','migrasi','pengaturan'],
-  apoteker:         ['dashboard','produk','transaksi','pembelian','faktur','supplier','tindaklanjut','laporan'],
-  asisten_apoteker: ['dashboard','produk','transaksi','tindaklanjut','laporan'],
-  kasir:            ['dashboard','transaksi'],
+  pemilik:          ['dashboard','produk','transaksi','layanan','pembelian','faktur','supplier','tindaklanjut','laporan','pengaturan'],
+  admin:            ['dashboard','produk','transaksi','layanan','pembelian','faktur','supplier','tindaklanjut','laporan','pengaturan'],
+  apoteker:         ['dashboard','produk','transaksi','layanan','pembelian','faktur','supplier','tindaklanjut','laporan'],
+  asisten_apoteker: ['dashboard','produk','transaksi','layanan','tindaklanjut','laporan'],
+  kasir:            ['dashboard','transaksi','layanan'],
 }
 const ROLE_LABELS: Record<string,string> = { pemilik:'Pemilik', apoteker:'Apoteker', asisten_apoteker:'Asisten Apoteker', kasir:'Kasir', admin:'Admin', superadmin:'Super Admin' }
 
@@ -64,10 +64,19 @@ export default function Dashboard() {
   const [statTrxHariIni, setStatTrxHariIni] = useState(0)
   const [statOmzet, setStatOmzet] = useState(0)
   const [statExpired, setStatExpired] = useState(0)
+  const [salesChart, setSalesChart] = useState<any[]>([])
+  const [chartRange, setChartRange] = useState<'7d' | '30d'>('7d')
+  const [bestSellers, setBestSellers] = useState<any[]>([])
+  const [lowStock, setLowStock] = useState<any[]>([])
+  const [expiringSoon, setExpiringSoon] = useState<any[]>([])
   const [settingsData, setSettingsData] = useState<any>({
     nama_apotek: '', alamat: '', nomor_ijin: '', nomor_telepon: ''
   })
   const [suppliers, setSuppliers] = useState<any[]>([])
+  const [services, setServices] = useState<any[]>([])
+  const [showServiceForm, setShowServiceForm] = useState(false)
+  const [serviceForm, setServiceForm] = useState({ nama: '', harga: 0, deskripsi: '' })
+  const [editService, setEditService] = useState<any>(null)
   const [showSupplierForm, setShowSupplierForm] = useState(false)
   const [supplierForm, setSupplierForm] = useState({
     nama_supplier: '', jenis: 'PBF', alamat: '', telepon: '', email: ''
@@ -110,9 +119,11 @@ export default function Dashboard() {
   useEffect(() => { fetchSettings() }, [])
   useEffect(() => { if (activePage === 'tindaklanjut') { fetchRiwayatMusnah(); fetchRiwayatRetur() } }, [activePage])
   useEffect(() => { if (activePage === 'dashboard') fetchStats() }, [activePage])
+  useEffect(() => { if (activePage === 'dashboard') fetchSalesChart(chartRange) }, [chartRange])
   useEffect(() => { if (activePage === 'produk') { fetchProducts(); fetchExpiredAlerts() } }, [activePage])
   useEffect(() => { if (activePage === 'laporan') fetchRiwayat() }, [activePage])
   useEffect(() => { if (activePage === 'supplier') fetchSuppliers() }, [activePage])
+  useEffect(() => { if (activePage === 'layanan' || activePage === 'transaksi') fetchServices() }, [activePage])
   useEffect(() => { if (activePage === 'pembelian') { fetchPOList(); fetchSuppliers() } }, [activePage])
   useEffect(() => { if (activePage === 'faktur') fetchFaktur() }, [activePage])
   useEffect(() => { if (activePage === 'pengaturan') fetchUsers() }, [activePage])
@@ -170,7 +181,7 @@ export default function Dashboard() {
       const { data: au } = await supabase.from('app_users').select('*').ilike('email', email).maybeSingle()
       if (au) {
         if (au.status !== 'aktif') {
-          alert('Akun Anda dinonaktifkan. Hubungi pemilik apotek.')
+          alert(t('Akun Anda dinonaktifkan. Hubungi pemilik apotek.', 'Your account has been deactivated. Contact the pharmacy owner.'))
           await supabase.auth.signOut(); window.location.href = '/'; return
         }
         setCurrentRole(au.role)
@@ -184,12 +195,13 @@ export default function Dashboard() {
   }, [])
 
   // Akses = daftar modul user (jika diatur) ; kalau kosong pakai default role.
-  // Super admin: akses penuh + halaman Companies.
-  const allowedPages = isSuper
-    ? [...menuItems.map(m => m.id), 'companies']
-    : (currentRole
-        ? (currentModules && currentModules.length ? currentModules : (ROLE_PAGES[currentRole] || ['dashboard']))
-        : [])
+  // Super admin: akses penuh + halaman Companies. Migrasi Data menyatu dengan Pengaturan.
+  const allowedPages = (() => {
+    if (isSuper) return [...menuItems.map(m => m.id), 'companies', 'migrasi']
+    if (!currentRole) return []
+    const base = currentModules && currentModules.length ? currentModules : (ROLE_PAGES[currentRole] || ['dashboard'])
+    return base.includes('pengaturan') ? [...base, 'migrasi'] : base
+  })()
 
   // Jika role tidak boleh membuka halaman aktif, arahkan ke halaman pertama yang diizinkan
   useEffect(() => {
@@ -343,14 +355,14 @@ export default function Dashboard() {
   }
 
   const submitPO = async () => {
-    if (!selectedSupplier || poItems.length === 0) return alert('Pilih supplier dan tambah produk dulu!')
+    if (!selectedSupplier || poItems.length === 0) return alert(t('Pilih supplier dan tambah produk dulu!', 'Select a supplier and add products first!'))
     const total_nilai = poItems.reduce((a, b) => a + b.subtotal, 0)
     const { data: po, error } = await supabase.from('purchase_orders').insert([{ supplier_id: selectedSupplier.id, total_nilai, catatan: poCatatan }]).select().single()
     if (error) { alert('Error: ' + error.message); return }
     await supabase.from('po_items').insert(poItems.map(i => ({ ...i, po_id: po.id })))
     setShowPOForm(false); setSelectedSupplier(null); setPoItems([]); setPoCatatan(''); setSupplierProducts([])
     fetchPOList()
-    alert(`✅ PO ${po.nomor_po} berhasil dibuat!`)
+    alert(`✅ ${t('PO', 'PO')} ${po.nomor_po} ${t('berhasil dibuat!', 'created successfully!')}`)
   }
 
   const openPenerimaan = async (po: any) => {
@@ -421,13 +433,13 @@ export default function Dashboard() {
         total: totalFaktur,
         status: 'belum_bayar',
       }])
-      fakturMsg = fErr ? `\n⚠️ Faktur gagal disimpan: ${fErr.message}` : `\n🧾 Faktur ${fakturForm.nomor_faktur.trim()} tercatat (jatuh tempo ${jt.toLocaleDateString('id-ID')}).`
+      fakturMsg = fErr ? `\n⚠️ ${t('Faktur gagal disimpan:', 'Failed to save invoice:')} ${fErr.message}` : `\n🧾 ${t('Faktur', 'Invoice')} ${fakturForm.nomor_faktur.trim()} ${t('tercatat (jatuh tempo', 'recorded (due')} ${jt.toLocaleDateString('id-ID')}).`
     }
 
     setShowPenerimaan(null)
     setPenerimaanItems([])
     fetchPOList()
-    alert((closePO ? '✅ PO selesai! Stok dan batch sudah diupdate.' : '✅ Penerimaan parsial disimpan. PO masih terbuka.') + fakturMsg)
+    alert((closePO ? t('✅ PO selesai! Stok dan batch sudah diupdate.', '✅ PO completed! Stock and batches updated.') : t('✅ Penerimaan parsial disimpan. PO masih terbuka.', '✅ Partial receipt saved. PO still open.')) + fakturMsg)
   }
 
   const printPO = async (po: any) => {
@@ -529,7 +541,7 @@ export default function Dashboard() {
     const { error } = existing
       ? await supabase.from('settings').update(payload).eq('id', existing.id)
       : await supabase.from('settings').insert([payload])
-    if (!error) { alert('✅ Data apotek berhasil disimpan!'); fetchSettings() }
+    if (!error) { alert(t('✅ Data apotek berhasil disimpan!', '✅ Pharmacy data saved successfully!')); fetchSettings() }
     else alert('Error: ' + error.message)
   }
 
@@ -545,8 +557,8 @@ export default function Dashboard() {
   }
 
   const handleTambahUser = async () => {
-    if (!userForm.nama.trim() || !userForm.email.trim() || !userForm.password) { alert('Email, password, dan nama wajib diisi'); return }
-    if (userForm.password.length < 6) { alert('Password minimal 6 karakter'); return }
+    if (!userForm.nama.trim() || !userForm.email.trim() || !userForm.password) { alert(t('Email, password, dan nama wajib diisi', 'Email, password, and name are required')); return }
+    if (userForm.password.length < 6) { alert(t('Password minimal 6 karakter', 'Password must be at least 6 characters')); return }
     setSavingUser(true)
     // 1. Buat akun login (pakai client isolasi agar sesi admin tidak berganti)
     const tmp = createSignupClient()
@@ -556,7 +568,7 @@ export default function Dashboard() {
       options: { data: { nama_lengkap: userForm.nama.trim() } },
     })
     if (authErr && !/already registered|already been registered/i.test(authErr.message)) {
-      setSavingUser(false); alert('Gagal membuat akun login: ' + authErr.message); return
+      setSavingUser(false); alert(t('Gagal membuat akun login: ', 'Failed to create login account: ') + authErr.message); return
     }
     // 2. Simpan ke direktori pengguna + hak akses modul
     const { error } = await supabase.from('app_users').insert([{
@@ -564,10 +576,10 @@ export default function Dashboard() {
       role: userForm.role, status: 'aktif', modules: userForm.modules,
     }])
     setSavingUser(false)
-    if (error) { alert('Akun login dibuat, tapi gagal simpan data: ' + error.message); return }
+    if (error) { alert(t('Akun login dibuat, tapi gagal simpan data: ', 'Login account created, but failed to save data: ') + error.message); return }
     setShowUserForm(false)
     fetchUsers()
-    alert('✅ Pengguna dibuat. User bisa langsung login dengan email & password tersebut.')
+    alert(t('✅ Pengguna dibuat. User bisa langsung login dengan email & password tersebut.', '✅ User created. They can sign in immediately with that email & password.'))
   }
 
   const handleUpdateUser = async () => {
@@ -599,13 +611,13 @@ export default function Dashboard() {
   }
 
   const handleDeleteUser = async (u: any) => {
-    if (!confirm(`Hapus pengguna "${u.nama}"?`)) return
+    if (!confirm(t(`Hapus pengguna "${u.nama}"?`, `Delete user "${u.nama}"?`))) return
     await supabase.from('app_users').delete().eq('id', u.id)
     fetchUsers()
   }
 
   const handleLogoUpload = (file: File) => {
-    if (file.size > 4 * 1024 * 1024) { alert('Ukuran maksimal 4MB'); return }
+    if (file.size > 4 * 1024 * 1024) { alert(t('Ukuran maksimal 4MB', 'Maximum size is 4MB')); return }
     const reader = new FileReader()
     reader.onload = () => setSettingsData({ ...settingsData, logo_url: reader.result as string })
     reader.readAsDataURL(file)
@@ -619,7 +631,7 @@ export default function Dashboard() {
 
   const toggleCompanyStatus = async (c: any) => {
     const next = c.status === 'aktif' ? 'nonaktif' : 'aktif'
-    if (!confirm(`${next === 'aktif' ? 'Aktifkan' : 'Nonaktifkan'} apotek "${c.nama}"?`)) return
+    if (!confirm(`${next === 'aktif' ? t('Aktifkan', 'Activate') : t('Nonaktifkan', 'Deactivate')} ${t('apotek', 'pharmacy')} "${c.nama}"?`)) return
     await supabase.from('companies').update({ status: next }).eq('id', c.id)
     fetchCompanies()
   }
@@ -842,6 +854,60 @@ export default function Dashboard() {
       .lte('expired_date', in60.toISOString().split('T')[0])
       .gt('stok_batch', 0))
     setStatExpired(expCount || 0)
+    fetchDashboardWidgets()
+  }
+
+  // Kunci tanggal lokal (bukan UTC) supaya transaksi hari ini tidak "tergeser" 1 hari
+  const localKey = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  const fetchSalesChart = async (range: '7d' | '30d' = chartRange) => {
+    const span = range === '30d' ? 30 : 7
+    const start = new Date(); start.setHours(0, 0, 0, 0); start.setDate(start.getDate() - (span - 1))
+    const days: Date[] = []
+    for (let i = 0; i < span; i++) { const d = new Date(start); d.setDate(start.getDate() + i); days.push(d) }
+    const { data: trx } = await scopeQ(supabase.from('transactions').select('total,created_at,status').gte('created_at', start.toISOString()))
+    // Bucket transaksi berdasarkan tanggal LOKAL
+    const bucket: Record<string, number> = {}
+    ;(trx || []).forEach((x: any) => {
+      if (x.status === 'dibatalkan' || !x.created_at) return
+      const k = localKey(new Date(x.created_at))
+      bucket[k] = (bucket[k] || 0) + (x.total || 0)
+    })
+    setSalesChart(days.map((d, i) => {
+      const value = bucket[localKey(d)] || 0
+      // 7 hari: tampilkan nama hari. 30 hari: tampilkan tgl tiap ~5 titik
+      const label = span === 7
+        ? d.toLocaleDateString(lang === 'en' ? 'en-US' : 'id-ID', { weekday: 'short' })
+        : (i % 5 === 0 || i === span - 1) ? d.toLocaleDateString(lang === 'en' ? 'en-US' : 'id-ID', { day: 'numeric', month: 'short' }) : ''
+      return { label, day: d.getDate(), value }
+    }))
+  }
+
+  const fetchDashboardWidgets = async () => {
+    await fetchSalesChart()
+
+    // Produk terlaris (30 hari)
+    const d30 = new Date(); d30.setDate(d30.getDate() - 30)
+    const { data: items } = await scopeQ(supabase.from('transaction_items').select('nama_obat,jumlah,transactions(status,created_at)'))
+    const map: Record<string, number> = {}
+    ;(items || []).forEach((it: any) => {
+      if (it.transactions?.status === 'dibatalkan') return
+      if (!it.transactions?.created_at || new Date(it.transactions.created_at) < d30) return
+      map[it.nama_obat] = (map[it.nama_obat] || 0) + (it.jumlah || 0)
+    })
+    setBestSellers(Object.entries(map).map(([nama, qty]) => ({ nama, qty })).sort((a, b) => b.qty - a.qty).slice(0, 5))
+
+    // Stok minim
+    const { data: prods } = await scopeQ(supabase.from('products').select('nama_obat,kode,stok_total,stok_minimum').order('stok_total'))
+    setLowStock((prods || []).filter((p: any) => (p.stok_total ?? 0) <= (p.stok_minimum ?? 0)).slice(0, 8))
+
+    // Segera expired
+    const in60 = new Date(); in60.setDate(in60.getDate() + 60)
+    const { data: batches } = await scopeQ(supabase.from('product_batches')
+      .select('batch_number,expired_date,stok_batch,products(nama_obat)')
+      .lte('expired_date', in60.toISOString().split('T')[0]).gt('stok_batch', 0).order('expired_date'))
+    setExpiringSoon((batches || []).slice(0, 6))
   }
 
   const fetchProducts = async () => {
@@ -911,14 +977,14 @@ export default function Dashboard() {
 
 const submitCloseBatch = async () => {
   if (!showTindakLanjut) return
-  if (!confirm('Tandai batch ini selesai ditindaklanjuti?\nAlert akan dihapus. Stok total TIDAK dipotong — ini hanya pengingat.')) return
+  if (!confirm(t('Tandai batch ini selesai ditindaklanjuti?\nAlert akan dihapus. Stok total TIDAK dipotong — ini hanya pengingat.', 'Mark this batch as followed up?\nThe alert will be removed. Total stock is NOT deducted — reminder only.'))) return
   // Hanya menghapus batch dari daftar reminder (stok_batch -> 0).
   // Stok total produk TIDAK diubah di sini (bukan mutasi stok, hanya pengingat).
   await supabase.from('product_batches').update({ stok_batch: 0 }).eq('id', showTindakLanjut.id)
   setShowTindakLanjut(null)
   fetchExpiredAlerts()
   if (showProdukDetail) openProdukDetail(showProdukDetail)
-  alert('✅ Batch ditandai selesai, alert dihapus. Stok total tidak berubah.')
+  alert(t('✅ Batch ditandai selesai, alert dihapus. Stok total tidak berubah.', '✅ Batch marked done, alert removed. Total stock unchanged.'))
 }
 
 const submitMusnahkan = async () => {
@@ -938,20 +1004,20 @@ const submitMusnahkan = async () => {
 const submitRetur = async () => {
   if (!showTindakLanjut) return
   const supplierId = formRetur.supplier_id || batchSupplier?.id
-  if (!supplierId) { alert('Pilih supplier dulu!'); return }
+  if (!supplierId) { alert(t('Pilih supplier dulu!', 'Choose a supplier first!')); return }
   // Retur hanya DIAJUKAN dulu — stok belum berkurang sampai dikonfirmasi.
   const { error } = await supabase.from('retur_supplier').insert([{ batch_id: showTindakLanjut.id, product_id: showTindakLanjut.product_id, supplier_id: supplierId, qty_retur: formRetur.qty_retur, tanggal_retur: formRetur.tanggal_retur, alasan: formRetur.alasan, status: 'diajukan' }])
   if (error) { alert('Error: ' + error.message); return }
   setShowTindakLanjut(null)
   fetchExpiredAlerts()
   if (showProdukDetail) openProdukDetail(showProdukDetail)
-  alert('✅ Retur diajukan. Stok belum berubah — konfirmasi di menu Tindak Lanjut → Retur untuk memproses.')
+  alert(t('✅ Retur diajukan. Stok belum berubah — konfirmasi di menu Tindak Lanjut → Retur untuk memproses.', '✅ Return filed. Stock unchanged — confirm it in Follow-up → Returns to process.'))
 }
 
 // Konfirmasi retur: stok fisik keluar → kurangi batch & stok total, status jadi 'selesai'
 const konfirmasiRetur = async (row: any) => {
-  if (row.status === 'selesai') { alert('Retur ini sudah dikonfirmasi.'); return }
-  if (!confirm(`Konfirmasi retur ${row.nomor_retur || ''}?\nStok "${row.products?.nama_obat || ''}" akan dikurangi ${row.qty_retur} ${row.products?.satuan || ''}.`)) return
+  if (row.status === 'selesai') { alert(t('Retur ini sudah dikonfirmasi.', 'This return is already confirmed.')); return }
+  if (!confirm(t(`Konfirmasi retur ${row.nomor_retur || ''}?\nStok "${row.products?.nama_obat || ''}" akan dikurangi ${row.qty_retur} ${row.products?.satuan || ''}.`, `Confirm return ${row.nomor_retur || ''}?\nStock of "${row.products?.nama_obat || ''}" will be reduced by ${row.qty_retur} ${row.products?.satuan || ''}.`))) return
   const { data: batch } = await supabase.from('product_batches').select('stok_batch').eq('id', row.batch_id).single()
   const { data: prod } = await supabase.from('products').select('stok_total').eq('id', row.product_id).single()
   await supabase.from('product_batches').update({ stok_batch: Math.max(0, (batch?.stok_batch || 0) - row.qty_retur) }).eq('id', row.batch_id)
@@ -959,16 +1025,16 @@ const konfirmasiRetur = async (row: any) => {
   await supabase.from('retur_supplier').update({ status: 'selesai' }).eq('id', row.id)
   fetchRiwayatRetur()
   fetchExpiredAlerts()
-  alert('✅ Retur dikonfirmasi. Stok sudah diperbarui.')
+  alert(t('✅ Retur dikonfirmasi. Stok sudah diperbarui.', '✅ Return confirmed. Stock updated.'))
 }
 
 // Batalkan retur yang masih diajukan (stok tidak terpengaruh karena belum dikurangi)
 const batalRetur = async (row: any) => {
-  if (row.status === 'selesai') { alert('Retur sudah selesai, tidak bisa dibatalkan.'); return }
-  if (!confirm(`Batalkan retur ${row.nomor_retur || ''}?`)) return
+  if (row.status === 'selesai') { alert(t('Retur sudah selesai, tidak bisa dibatalkan.', 'Return is completed and cannot be cancelled.')); return }
+  if (!confirm(t(`Batalkan retur ${row.nomor_retur || ''}?`, `Cancel return ${row.nomor_retur || ''}?`))) return
   await supabase.from('retur_supplier').update({ status: 'dibatalkan' }).eq('id', row.id)
   fetchRiwayatRetur()
-  alert('Retur dibatalkan.')
+  alert(t('Retur dibatalkan.', 'Return cancelled.'))
 }
 
   const fetchRiwayatMusnah = async () => {
@@ -1006,7 +1072,7 @@ const batalRetur = async (row: any) => {
     const fmtED = (d: any) => d ? new Date(d).toLocaleDateString('id-ID', { month: 'short', year: 'numeric' }) : '-'
 
     const { data: prods } = await scopeQ(supabase.from('products').select('*').eq('kategori', golongan).order('nama_obat'))
-    if (!prods || prods.length === 0) { alert('Belum ada produk berkategori ' + golongan + '.'); return }
+    if (!prods || prods.length === 0) { alert(t('Belum ada produk berkategori ', 'No products in category ') + golongan + '.'); return }
     const ids = prods.map((p: any) => p.id)
 
     const { data: penerimaan } = await supabase.from('po_items')
@@ -1111,6 +1177,29 @@ const batalRetur = async (row: any) => {
     setSuppliers(data || [])
   }
 
+  // ── Layanan Jasa (services) ──
+  const fetchServices = async () => {
+    const { data } = await scopeQ(supabase.from('services').select('*').order('nama'))
+    setServices(data || [])
+  }
+  const handleTambahService = async () => {
+    if (!serviceForm.nama.trim()) { alert(t('Nama layanan wajib diisi', 'Service name is required')); return }
+    const cid = (isSuper && migrasiCompany) ? { company_id: migrasiCompany } : {}
+    const { error } = await supabase.from('services').insert([{ nama: serviceForm.nama.trim(), harga: serviceForm.harga || 0, deskripsi: serviceForm.deskripsi || null, ...cid }])
+    if (error) { alert('Error: ' + error.message); return }
+    setShowServiceForm(false); setServiceForm({ nama: '', harga: 0, deskripsi: '' }); fetchServices()
+  }
+  const handleUpdateService = async () => {
+    if (!editService) return
+    const { error } = await supabase.from('services').update({ nama: editService.nama, harga: editService.harga || 0, deskripsi: editService.deskripsi, status: editService.status }).eq('id', editService.id)
+    if (error) { alert('Error: ' + error.message); return }
+    setEditService(null); fetchServices()
+  }
+  const handleDeleteService = async (s: any) => {
+    if (!confirm(t(`Hapus layanan "${s.nama}"?`, `Delete service "${s.nama}"?`))) return
+    await supabase.from('services').delete().eq('id', s.id); fetchServices()
+  }
+
   const fetchProdukSuppliers = async (productId: string) => {
     const { data } = await supabase.from('product_suppliers').select('*, suppliers(*)').eq('product_id', productId)
     setProdukSuppliers(data || [])
@@ -1174,7 +1263,7 @@ const batalRetur = async (row: any) => {
           </p>
           <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/' }}
             className="w-full bg-[#1e3a2c] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#24462f] transition">
-            Keluar
+            {t('Keluar', 'Sign out')}
           </button>
         </div>
       </div>
@@ -1189,10 +1278,83 @@ const batalRetur = async (row: any) => {
           <FlaskConical size={24} className="text-white" strokeWidth={1.8} />
           <span className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-[#c2632f]" />
         </div>
-        <p className="text-sm text-[#6b7280]">Memuat akses pengguna…</p>
+        <p className="text-sm text-[#6b7280]">{t('Memuat akses pengguna…', 'Loading user access…')}</p>
       </div>
     )
   }
+
+  // Konten Migrasi Data — dirender sebagai sub-menu di dalam Pengaturan
+  const migrasiCards = [
+    { key: 'produk', title: t('Daftar Produk', 'Product List'), Icon: Pill, desc: t('Impor katalog obat: nama, kategori, harga, dan stok awal.', 'Import the drug catalog: name, category, price, and opening stock.'), cols: 'kode (opsional), nama_obat, nama_generik, kandungan, kategori, satuan, isi_kemasan, harga_beli, harga_jual, stok_total, stok_minimum', hint: t('Kategori: bebas, bebas_terbatas, keras, suplemen, psikotropika, narkotika, prekursor, alkes, lainnya.', 'Category: bebas, bebas_terbatas, keras, suplemen, psikotropika, narkotika, prekursor, alkes, lainnya.'), file: 'template_produk.csv', headers: ['kode', 'nama_obat', 'nama_generik', 'kandungan', 'kategori', 'satuan', 'isi_kemasan', 'harga_beli', 'harga_jual', 'stok_total', 'stok_minimum'], examples: [['', 'Paracetamol 500mg', 'Paracetamol', 'Paracetamol 500 mg', 'bebas', 'Tablet', '100', '500', '1000', '150', '10']], onUpload: importProduk },
+    { key: 'supplier', title: t('Daftar Supplier', 'Supplier List'), Icon: Truck, desc: t('Impor daftar PBF / supplier obat.', 'Import the list of distributors / drug suppliers.'), cols: 'nama_supplier, jenis, alamat, telepon, email', hint: t('Jenis yang valid: PBF, Subdistributor, atau Lainnya (nilai lain otomatis disesuaikan).', 'Valid types: PBF, Subdistributor, or Lainnya (other values auto-adjusted).'), file: 'template_supplier.csv', headers: ['nama_supplier', 'jenis', 'alamat', 'telepon', 'email'], examples: [['PT Bina San Prima', 'PBF', 'Jl. Industri No. 1', '021-1234567', 'sales@binasan.co.id']], onUpload: importSupplier },
+    { key: 'stok', title: t('Stok Awal (Batch)', 'Opening Stock (Batch)'), Icon: PackageOpen, desc: t('Impor stok awal per batch + expired date. Dicocokkan ke produk lewat kode.', 'Import opening stock per batch + expiry date. Matched to products by code.'), cols: 'kode_produk, batch_number, expired_date (YYYY-MM-DD), stok_batch', hint: t('Impor Produk dulu agar kode-nya tersedia. Stok batch akan menambah stok total produk.', 'Import Products first so codes exist. Batch stock adds to the total product stock.'), file: 'template_stok_awal.csv', headers: ['kode_produk', 'batch_number', 'expired_date', 'stok_batch'], examples: [['OBT-0001', 'BT-2401', '2026-12-31', '150']], onUpload: importStok },
+    { key: 'mapping', title: t('Mapping Produk–Supplier', 'Product–Supplier Mapping'), Icon: ClipboardList, desc: t('Kaitkan tiap produk ke supplier-nya, agar pembuatan PO otomatis tahu daftar produk per supplier.', 'Link each product to its supplier, so creating a PO automatically knows the products per supplier.'), cols: 'kode_produk, nama_supplier (atau kode_supplier)', hint: t('Import Produk & Supplier dulu. Nama supplier harus sama persis dengan yang terdaftar.', 'Import Products & Suppliers first. Supplier name must match exactly.'), file: 'template_mapping_produk_supplier.csv', headers: ['kode_produk', 'nama_supplier'], examples: [['OBT-0001', 'PT Bina San Prima']], onUpload: importMapping },
+    { key: 'fakturawal', title: t('Faktur / Hutang Awal', 'Opening Invoices / Debts'), Icon: Receipt, desc: t('Impor faktur pembelian yang belum lunas — langsung muncul di menu Pembayaran Faktur dengan jatuh tempo.', 'Import unpaid purchase invoices — they appear in Invoice Payments with due dates.'), cols: 'nomor_faktur, nama_supplier, tanggal_faktur (YYYY-MM-DD), term_of_payment, total', hint: t('Import Supplier dulu. Jatuh tempo dihitung dari tanggal_faktur + term_of_payment bila kolom tanggal_jatuh_tempo tidak diisi.', 'Import Suppliers first. Due date is computed from tanggal_faktur + term_of_payment if tanggal_jatuh_tempo is empty.'), file: 'template_faktur_awal.csv', headers: ['nomor_faktur', 'nama_supplier', 'tanggal_faktur', 'term_of_payment', 'total'], examples: [['INV/2025/0087', 'PT Bina San Prima', '2026-06-15', '30', '2500000']], onUpload: importFakturAwal },
+  ]
+  const migrasiPane = (
+    <div>
+      <h2 className="text-xl font-bold text-[#1c2620] mb-1">{t('Migrasi Data', 'Data Migration')}</h2>
+      <p className="text-sm text-[#6b7280] mb-5">{t('Onboarding cepat: unduh template, isi di Excel/Sheets, lalu upload CSV.', 'Fast onboarding: download a template, fill it in Excel/Sheets, then upload the CSV.')}</p>
+      {isSuper && (
+        <div className="mb-5 p-4 rounded-xl border border-amber-300 bg-amber-50 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-amber-800">{t('Mode Super Admin', 'Super Admin Mode')}</p>
+            <p className="text-xs text-amber-700">{t('Pilih apotek tujuan — data import/export akan masuk/diambil dari apotek ini.', 'Select a target pharmacy — imported/exported data goes to/from this pharmacy.')}</p>
+          </div>
+          <select value={migrasiCompany} onChange={e => setMigrasiCompany(e.target.value)}
+            className="border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[200px] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+            <option value="">{t('— Pilih Apotek —', '— Select Pharmacy —')}</option>
+            {companies.map((c: any) => <option key={c.id} value={c.id}>{c.nama}</option>)}
+          </select>
+        </div>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {migrasiCards.map(c => (
+          <div key={c.key} className="border border-[#e2ddd3] rounded-2xl p-4 flex flex-col">
+            <div className="w-10 h-10 rounded-xl bg-[#dce5db] text-[#2f5741] flex items-center justify-center mb-3"><c.Icon size={18} strokeWidth={1.9} /></div>
+            <h3 className="font-bold text-[#1c2620] text-sm">{c.title}</h3>
+            <p className="text-xs text-[#6b7280] mt-1 mb-3">{c.desc}</p>
+            <div className="bg-[#f5f2eb] rounded-lg p-2.5 mb-3">
+              <p className="text-[10px] font-medium text-[#6b7280] mb-1">{t('Kolom CSV:', 'CSV Columns:')}</p>
+              <p className="text-[10px] text-[#1c2620] font-mono leading-relaxed break-words">{c.cols}</p>
+            </div>
+            <p className="text-[10px] text-[#9ca3af] mb-3">{c.hint}</p>
+            <div className="mt-auto flex flex-col gap-2">
+              <button onClick={() => downloadTemplate(c.file, c.headers, c.examples)}
+                className="inline-flex items-center justify-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] py-2 rounded-lg text-xs font-medium hover:bg-[#f5f2eb] transition">
+                <Download size={14} /> {t('Download Template', 'Download Template')}
+              </button>
+              <label className={`inline-flex items-center justify-center gap-2 bg-[#1e3a2c] text-white py-2 rounded-lg text-xs font-medium hover:bg-[#24462f] transition cursor-pointer ${importing === c.key ? 'opacity-60 pointer-events-none' : ''}`}>
+                <Upload size={14} /> {importing === c.key ? t('Mengimpor…', 'Importing…') : t('Upload CSV', 'Upload CSV')}
+                <input type="file" accept=".csv,text/csv" className="hidden"
+                  onChange={e => {
+                    if (isSuper && !migrasiCompany) { alert(t('Pilih apotek tujuan dulu di atas.', 'Select a target pharmacy above first.')); e.target.value = ''; return }
+                    if (e.target.files?.[0]) { c.onUpload(e.target.files[0]); e.target.value = '' }
+                  }} />
+              </label>
+            </div>
+            {importInfo[c.key] && (
+              <p className={`text-xs mt-3 ${importInfo[c.key].startsWith('✅') ? 'text-green-700' : 'text-red-600'}`}>{importInfo[c.key]}</p>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="mt-5 bg-[#f5f2eb] rounded-xl p-3.5 text-xs text-[#6b7280]">
+        <p className="font-medium text-[#1c2620] mb-1">{t('Urutan yang disarankan', 'Recommended order')}</p>
+        <p>{t('1) Import Produk → 2) Supplier → 3) Stok Awal → 4) Mapping Produk–Supplier. Simpan file sebagai CSV UTF-8.', '1) Import Products → 2) Suppliers → 3) Opening Stock → 4) Product–Supplier Mapping. Save the file as CSV UTF-8.')}</p>
+      </div>
+      <div className="mt-5">
+        <h3 className="text-sm font-bold text-[#1c2620] mb-1">{t('Export / Backup Data', 'Export / Backup Data')}</h3>
+        <p className="text-xs text-[#6b7280] mb-3">{t('Unduh data apotek saat ini ke CSV.', 'Download current pharmacy data to CSV.')}</p>
+        <div className="flex flex-wrap gap-2">
+          {([['Produk', exportProduk], ['Supplier', exportSupplier], ['Stok / Batch', exportStok], ['Transaksi', exportTransaksi], ['Faktur', exportFaktur]] as const).map(([label, fn]) => (
+            <button key={label} onClick={() => { if (isSuper && !migrasiCompany) return alert(t('Pilih apotek tujuan dulu di atas.', 'Select a target pharmacy above first.')); (fn as () => void)() }}
+              className="inline-flex items-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[#f5f2eb] transition"><Download size={14} /> {t('Export', 'Export')} {label}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 
   return (
     <>
@@ -1201,66 +1363,66 @@ const batalRetur = async (row: any) => {
   <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
     <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
       <div className="mb-4">
-        <h2 className="text-lg font-bold text-[#1e3a2c]">Tindak Lanjut Batch</h2>
-        <p className="text-xs text-[#6b7280]">{showProdukDetail?.nama_obat} · Batch: {showTindakLanjut.batch_number || '-'} · Exp: {showTindakLanjut.expired_date ? new Date(showTindakLanjut.expired_date).toLocaleDateString('id-ID') : '-'} · Stok: {showTindakLanjut.stok_batch}</p>
+        <h2 className="text-lg font-bold text-[#1e3a2c]">{t('Tindak Lanjut Batch', 'Batch Follow-up')}</h2>
+        <p className="text-xs text-[#6b7280]">{showProdukDetail?.nama_obat} · Batch: {showTindakLanjut.batch_number || '-'} · Exp: {showTindakLanjut.expired_date ? new Date(showTindakLanjut.expired_date).toLocaleDateString('id-ID') : '-'} · {t('Stok', 'Stock')}: {showTindakLanjut.stok_batch}</p>
       </div>
       {tindakLanjutMode === 'pilih' && (
         <div className="space-y-3">
           <button onClick={submitCloseBatch} className="w-full flex items-start gap-4 p-4 border-2 border-[#d1cdc4] rounded-xl hover:border-[#1e3a2c] hover:bg-[#f5f2eb] transition text-left">
             <span className="text-2xl">✅</span>
-            <div><p className="font-semibold text-[#1e3a2c] text-sm">Tandai Selesai (Reminder)</p><p className="text-xs text-[#6b7280] mt-0.5">Hapus alert batch ini dari daftar. Stok total <b>tidak</b> dipotong — hanya pengingat.</p></div>
+            <div><p className="font-semibold text-[#1e3a2c] text-sm">{t('Tandai Selesai (Reminder)', 'Mark Done (Reminder)')}</p><p className="text-xs text-[#6b7280] mt-0.5">{t('Hapus alert batch ini dari daftar. Stok total tidak dipotong — hanya pengingat.', 'Remove this batch alert from the list. Total stock is not deducted — reminder only.')}</p></div>
           </button>
           <button onClick={() => setTindakLanjutMode('musnahkan')} className="w-full flex items-start gap-4 p-4 border-2 border-[#d1cdc4] rounded-xl hover:border-red-400 hover:bg-red-50 transition text-left">
             <span className="text-2xl">🔥</span>
-            <div><p className="font-semibold text-[#1e3a2c] text-sm">Musnahkan</p><p className="text-xs text-[#6b7280] mt-0.5">Buat Berita Acara Pemusnahan dan cetak dokumen resmi.</p></div>
+            <div><p className="font-semibold text-[#1e3a2c] text-sm">{t('Musnahkan', 'Destroy')}</p><p className="text-xs text-[#6b7280] mt-0.5">{t('Buat Berita Acara Pemusnahan dan cetak dokumen resmi.', 'Create a Destruction Report and print the official document.')}</p></div>
           </button>
           <button onClick={() => setTindakLanjutMode('retur')} className="w-full flex items-start gap-4 p-4 border-2 border-[#d1cdc4] rounded-xl hover:border-blue-400 hover:bg-blue-50 transition text-left">
             <span className="text-2xl">↩️</span>
-            <div><p className="font-semibold text-[#1e3a2c] text-sm">Retur ke Supplier</p><p className="text-xs text-[#6b7280] mt-0.5">{batchSupplier ? `Retur ke ${batchSupplier.nama_supplier}` : 'Pilih supplier untuk retur'}</p></div>
+            <div><p className="font-semibold text-[#1e3a2c] text-sm">{t('Retur ke Supplier', 'Return to Supplier')}</p><p className="text-xs text-[#6b7280] mt-0.5">{batchSupplier ? `${t('Retur ke', 'Return to')} ${batchSupplier.nama_supplier}` : t('Pilih supplier untuk retur', 'Choose a supplier for the return')}</p></div>
           </button>
-          <button onClick={() => setShowTindakLanjut(null)} className="w-full border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+          <button onClick={() => setShowTindakLanjut(null)} className="w-full border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
         </div>
       )}
       {tindakLanjutMode === 'musnahkan' && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Pemusnahan</label><input type="date" value={formMusnahkan.tanggal_musnahkan} onChange={e => setFormMusnahkan({...formMusnahkan, tanggal_musnahkan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Qty Dimusnahkan</label><input type="number" value={formMusnahkan.qty_musnahkan} max={showTindakLanjut.stok_batch} onChange={e => setFormMusnahkan({...formMusnahkan, qty_musnahkan: +e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Tanggal Pemusnahan', 'Destruction Date')}</label><input type="date" value={formMusnahkan.tanggal_musnahkan} onChange={e => setFormMusnahkan({...formMusnahkan, tanggal_musnahkan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Qty Dimusnahkan', 'Qty Destroyed')}</label><input type="number" value={formMusnahkan.qty_musnahkan} max={showTindakLanjut.stok_batch} onChange={e => setFormMusnahkan({...formMusnahkan, qty_musnahkan: +e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
           </div>
-          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode</label>
+          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Metode', 'Method')}</label>
             <select value={formMusnahkan.metode} onChange={e => setFormMusnahkan({...formMusnahkan, metode: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
               <option>Dibakar</option><option>Dikubur</option><option>Dihancurkan</option><option>Dilarutkan & Dibuang</option><option>Lainnya</option>
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Saksi 1</label><input value={formMusnahkan.saksi_1} onChange={e => setFormMusnahkan({...formMusnahkan, saksi_1: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Saksi 2</label><input value={formMusnahkan.saksi_2} onChange={e => setFormMusnahkan({...formMusnahkan, saksi_2: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Saksi 1', 'Witness 1')}</label><input value={formMusnahkan.saksi_1} onChange={e => setFormMusnahkan({...formMusnahkan, saksi_1: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Saksi 2', 'Witness 2')}</label><input value={formMusnahkan.saksi_2} onChange={e => setFormMusnahkan({...formMusnahkan, saksi_2: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
           </div>
-          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Keterangan</label><textarea value={formMusnahkan.keterangan} rows={2} onChange={e => setFormMusnahkan({...formMusnahkan, keterangan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
-          <div className="flex gap-3"><button onClick={() => setTindakLanjutMode('pilih')} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Kembali</button><button onClick={submitMusnahkan} className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium">🔥 Musnahkan & Cetak BA</button></div>
+          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Keterangan', 'Notes')}</label><textarea value={formMusnahkan.keterangan} rows={2} onChange={e => setFormMusnahkan({...formMusnahkan, keterangan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          <div className="flex gap-3"><button onClick={() => setTindakLanjutMode('pilih')} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Kembali', 'Back')}</button><button onClick={submitMusnahkan} className="flex-1 bg-red-600 text-white py-2 rounded-lg text-sm font-medium">🔥 {t('Musnahkan & Cetak BA', 'Destroy & Print Report')}</button></div>
         </div>
       )}
       {tindakLanjutMode === 'retur' && (
         <div className="space-y-3">
           {batchSupplier ? (
-            <div className="p-3 bg-[#f5f2eb] rounded-lg"><p className="text-xs text-[#6b7280] mb-0.5">Supplier dari PO asal</p><p className="font-semibold text-[#1e3a2c]">{batchSupplier.nama_supplier}</p></div>
+            <div className="p-3 bg-[#f5f2eb] rounded-lg"><p className="text-xs text-[#6b7280] mb-0.5">{t('Supplier dari PO asal', 'Supplier from original PO')}</p><p className="font-semibold text-[#1e3a2c]">{batchSupplier.nama_supplier}</p></div>
           ) : (
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Pilih Supplier *</label>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Pilih Supplier *', 'Choose Supplier *')}</label>
               <select value={formRetur.supplier_id} onChange={e => setFormRetur({...formRetur, supplier_id: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
-                <option value="">-- Pilih Supplier --</option>
+                <option value="">{t('-- Pilih Supplier --', '-- Choose Supplier --')}</option>
                 {suppliers.map(s => <option key={s.id} value={s.id}>{s.nama_supplier}</option>)}
               </select>
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Retur</label><input type="date" value={formRetur.tanggal_retur} onChange={e => setFormRetur({...formRetur, tanggal_retur: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
-            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Qty Retur</label><input type="number" value={formRetur.qty_retur} max={showTindakLanjut.stok_batch} onChange={e => setFormRetur({...formRetur, qty_retur: +e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Tanggal Retur', 'Return Date')}</label><input type="date" value={formRetur.tanggal_retur} onChange={e => setFormRetur({...formRetur, tanggal_retur: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+            <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Qty Retur', 'Return Qty')}</label><input type="number" value={formRetur.qty_retur} max={showTindakLanjut.stok_batch} onChange={e => setFormRetur({...formRetur, qty_retur: +e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
           </div>
-          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">Alasan</label><textarea value={formRetur.alasan} rows={2} onChange={e => setFormRetur({...formRetur, alasan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
+          <div><label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Alasan', 'Reason')}</label><textarea value={formRetur.alasan} rows={2} onChange={e => setFormRetur({...formRetur, alasan: e.target.value})} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" /></div>
           <div className="flex items-start gap-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
-            <span>ℹ️</span><span>Retur diajukan dulu. <b>Stok baru berkurang setelah kamu Konfirmasi</b> di menu Tindak Lanjut → Retur.</span>
+            <span>ℹ️</span><span>{t('Retur diajukan dulu.', 'The return is filed first.')} <b>{t('Stok baru berkurang setelah kamu Konfirmasi', 'Stock is only reduced after you Confirm')}</b> {t('di menu Tindak Lanjut → Retur.', 'in Follow-up → Returns.')}</span>
           </div>
-          <div className="flex gap-3"><button onClick={() => setTindakLanjutMode('pilih')} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Kembali</button><button onClick={submitRetur} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">↩️ Ajukan Retur</button></div>
+          <div className="flex gap-3"><button onClick={() => setTindakLanjutMode('pilih')} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Kembali', 'Back')}</button><button onClick={submitRetur} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium">↩️ {t('Ajukan Retur', 'File Return')}</button></div>
         </div>
       )}
     </div>
@@ -1287,7 +1449,7 @@ const batalRetur = async (row: any) => {
                     className={`px-4 py-1.5 rounded-lg text-xs font-medium transition ${
                       produkDetailTab === tab ? 'bg-[#1e3a2c] text-[#e8e4d9]' : 'text-[#6b7280] hover:bg-[#f5f2eb]'
                     }`}>
-                    {tab === 'info' ? 'Info Produk' : tab === 'batch' ? 'Batch & Expired' : tab === 'keluar' ? 'Riwayat Keluar' : 'Riwayat Masuk'}
+                    {tab === 'info' ? t('Info Produk', 'Product Info') : tab === 'batch' ? t('Batch & Expired', 'Batch & Expiry') : tab === 'keluar' ? t('Riwayat Keluar', 'Out History') : t('Riwayat Masuk', 'In History')}
                   </button>
                 ))}
               </div>
@@ -1358,7 +1520,7 @@ const batalRetur = async (row: any) => {
               {produkDetailTab === 'batch' && (
                 <div>
                   {produkBatches.length === 0 ? (
-                    <p className="text-center text-[#9ca3af] py-8">Belum ada data batch</p>
+                    <p className="text-center text-[#9ca3af] py-8">{t('Belum ada data batch', 'No batch data yet')}</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
@@ -1419,7 +1581,7 @@ const batalRetur = async (row: any) => {
               {produkDetailTab === 'keluar' && (
                 <div>
                   {produkTrxOut.length === 0 ? (
-                    <p className="text-center text-[#9ca3af] py-8">Belum ada riwayat penjualan</p>
+                    <p className="text-center text-[#9ca3af] py-8">{t('Belum ada riwayat penjualan', 'No sales history yet')}</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
@@ -1472,7 +1634,7 @@ const batalRetur = async (row: any) => {
               {produkDetailTab === 'masuk' && (
                 <div>
                   {produkTrxIn.length === 0 ? (
-                    <p className="text-center text-[#9ca3af] py-8">Belum ada riwayat penerimaan</p>
+                    <p className="text-center text-[#9ca3af] py-8">{t('Belum ada riwayat penerimaan', 'No receiving history yet')}</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
@@ -1620,17 +1782,17 @@ const batalRetur = async (row: any) => {
           <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-bold text-[#1e3a2c]">Detail Transaksi</h2>
+                <h2 className="text-lg font-bold text-[#1e3a2c]">{t('Detail Transaksi', 'Transaction Details')}</h2>
                 <p className="text-xs text-[#6b7280]">{showTrxDetail.nomor_transaksi}</p>
               </div>
               <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                 showTrxDetail.status === 'dibatalkan' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-700'
-              }`}>{showTrxDetail.status}</span>
+              }`}>{showTrxDetail.status === 'dibatalkan' ? t('dibatalkan', 'cancelled') : (showTrxDetail.status || t('selesai', 'completed'))}</span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 mb-4 p-4 bg-[#f5f2eb] rounded-xl text-sm">
               <div>
-                <p className="text-xs text-[#6b7280] mb-0.5">Waktu</p>
+                <p className="text-xs text-[#6b7280] mb-0.5">{t('Waktu', 'Time')}</p>
                 <p className="font-medium text-[#1e3a2c]">{new Date(showTrxDetail.created_at).toLocaleString('id-ID')}</p>
               </div>
               <div>
@@ -1638,11 +1800,11 @@ const batalRetur = async (row: any) => {
                 <p className="font-bold text-[#1e3a2c]">Rp {showTrxDetail.total?.toLocaleString('id-ID')}</p>
               </div>
               <div>
-                <p className="text-xs text-[#6b7280] mb-0.5">Bayar</p>
+                <p className="text-xs text-[#6b7280] mb-0.5">{t('Bayar', 'Paid')}</p>
                 <p className="font-medium text-[#1e3a2c]">Rp {showTrxDetail.bayar?.toLocaleString('id-ID')}</p>
               </div>
               <div>
-                <p className="text-xs text-[#6b7280] mb-0.5">Kembalian</p>
+                <p className="text-xs text-[#6b7280] mb-0.5">{t('Kembalian', 'Change')}</p>
                 <p className="font-medium text-[#1e3a2c]">Rp {showTrxDetail.kembalian?.toLocaleString('id-ID')}</p>
               </div>
             </div>
@@ -1650,9 +1812,9 @@ const batalRetur = async (row: any) => {
             <table className="w-full text-sm mb-4">
               <thead>
                 <tr className="bg-[#1e3a2c]">
-                  <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Produk</th>
+                  <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">{t('Produk', 'Product')}</th>
                   <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty</th>
-                  <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga</th>
+                  <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">{t('Harga', 'Price')}</th>
                   <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Subtotal</th>
                 </tr>
               </thead>
@@ -1675,7 +1837,7 @@ const batalRetur = async (row: any) => {
             </table>
 
             <button onClick={() => { setShowTrxDetail(null); setTrxDetailItems([]) }}
-              className="w-full border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Tutup</button>
+              className="w-full border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Tutup', 'Close')}</button>
           </div>
         </div>
       )}
@@ -1686,7 +1848,7 @@ const batalRetur = async (row: any) => {
     <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-lg font-bold text-[#1e3a2c]">Detail PO</h2>
+          <h2 className="text-lg font-bold text-[#1e3a2c]">{t('Detail PO', 'PO Details')}</h2>
           <p className="text-xs text-[#6b7280]">{showPODetail.nomor_po}</p>
         </div>
         <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusPOColor[showPODetail.status] || 'bg-gray-100 text-gray-600'}`}>
@@ -1701,24 +1863,24 @@ const batalRetur = async (row: any) => {
           <p className="font-medium text-[#1e3a2c]">{showPODetail.suppliers?.nama_supplier}</p>
         </div>
         <div>
-          <p className="text-xs text-[#6b7280] mb-0.5">Tanggal PO</p>
+          <p className="text-xs text-[#6b7280] mb-0.5">{t('Tanggal PO', 'PO Date')}</p>
           <p className="font-medium text-[#1e3a2c]">
             {new Date(showPODetail.tanggal_po || showPODetail.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'})}
           </p>
         </div>
         <div>
-          <p className="text-xs text-[#6b7280] mb-0.5">Tanggal Terima</p>
+          <p className="text-xs text-[#6b7280] mb-0.5">{t('Tanggal Terima', 'Received Date')}</p>
           <p className="font-medium text-[#1e3a2c]">
             {showPODetail.tanggal_terima ? new Date(showPODetail.tanggal_terima).toLocaleDateString('id-ID', {day:'numeric',month:'long',year:'numeric'}) : '-'}
           </p>
         </div>
         <div>
-          <p className="text-xs text-[#6b7280] mb-0.5">Total Nilai</p>
+          <p className="text-xs text-[#6b7280] mb-0.5">{t('Total Nilai', 'Total Value')}</p>
           <p className="font-bold text-[#1e3a2c]">Rp {showPODetail.total_nilai?.toLocaleString('id-ID')}</p>
         </div>
         {showPODetail.catatan && (
           <div className="col-span-2">
-            <p className="text-xs text-[#6b7280] mb-0.5">Catatan</p>
+            <p className="text-xs text-[#6b7280] mb-0.5">{t('Catatan', 'Notes')}</p>
             <p className="text-[#1e3a2c]">{showPODetail.catatan}</p>
           </div>
         )}
@@ -1728,12 +1890,12 @@ const batalRetur = async (row: any) => {
       <table className="w-full text-sm mb-4">
         <thead>
           <tr className="bg-[#1e3a2c]">
-            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Produk</th>
-            <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Pesan</th>
-            <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">Qty Terima</th>
-            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">No. Batch</th>
-            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">Expired</th>
-            <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Harga Beli</th>
+            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">{t('Produk', 'Product')}</th>
+            <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">{t('Qty Pesan', 'Order Qty')}</th>
+            <th className="text-center px-3 py-2 text-xs text-[#e8e4d9]">{t('Qty Terima', 'Recv Qty')}</th>
+            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">{t('No. Batch', 'Batch No.')}</th>
+            <th className="text-left px-3 py-2 text-xs text-[#e8e4d9]">{t('Expired', 'Expiry')}</th>
+            <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">{t('Harga Beli', 'Buy Price')}</th>
             <th className="text-right px-3 py-2 text-xs text-[#e8e4d9]">Subtotal</th>
           </tr>
         </thead>
@@ -1766,9 +1928,9 @@ const batalRetur = async (row: any) => {
 
       <div className="flex gap-3">
         <button onClick={() => setShowPODetail(null)}
-          className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Tutup</button>
+          className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Tutup', 'Close')}</button>
         <button onClick={() => { printPO(showPODetail); }}
-          className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">🖨️ Print PO</button>
+          className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">🖨️ {t('Print PO', 'Print PO')}</button>
       </div>
     </div>
   </div>
@@ -1779,7 +1941,7 @@ const batalRetur = async (row: any) => {
           <div className="bg-white rounded-2xl p-6 w-full max-w-3xl shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-lg font-bold text-[#1e3a2c]">Penerimaan Barang</h2>
+                <h2 className="text-lg font-bold text-[#1e3a2c]">{t('Penerimaan Barang', 'Goods Receipt')}</h2>
                 <p className="text-xs text-[#6b7280]">PO: {showPenerimaan.nomor_po} · {showPenerimaan.suppliers?.nama_supplier}</p>
               </div>
             </div>
@@ -1787,12 +1949,12 @@ const batalRetur = async (row: any) => {
             <table className="w-full text-sm mb-4">
               <thead>
                 <tr className="bg-[#f5f2eb]">
-                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">Produk</th>
-                  <th className="text-center px-3 py-2 text-xs text-[#6b7280]">Qty PO</th>
-                  <th className="text-center px-3 py-2 text-xs text-[#6b7280]">Qty Terima</th>
-                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">No. Batch</th>
-                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">Expired Date</th>
-                  <th className="text-right px-3 py-2 text-xs text-[#6b7280]">Harga Beli</th>
+                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">{t('Produk', 'Product')}</th>
+                  <th className="text-center px-3 py-2 text-xs text-[#6b7280]">{t('Qty PO', 'PO Qty')}</th>
+                  <th className="text-center px-3 py-2 text-xs text-[#6b7280]">{t('Qty Terima', 'Recv Qty')}</th>
+                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">{t('No. Batch', 'Batch No.')}</th>
+                  <th className="text-left px-3 py-2 text-xs text-[#6b7280]">{t('Expired Date', 'Expiry Date')}</th>
+                  <th className="text-right px-3 py-2 text-xs text-[#6b7280]">{t('Harga Beli', 'Buy Price')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1848,17 +2010,17 @@ const batalRetur = async (row: any) => {
             <div className="border border-[#e2ddd3] rounded-xl p-4 mb-4">
               <div className="flex items-center gap-2 mb-3">
                 <Receipt size={15} className="text-[#1e3a2c]" />
-                <p className="text-sm font-semibold text-[#1e3a2c]">Faktur Pembelian</p>
-                <span className="text-xs text-[#9ca3af]">(kosongkan jika belum ada faktur)</span>
+                <p className="text-sm font-semibold text-[#1e3a2c]">{t('Faktur Pembelian', 'Purchase Invoice')}</p>
+                <span className="text-xs text-[#9ca3af]">{t('(kosongkan jika belum ada faktur)', '(leave empty if no invoice yet)')}</span>
               </div>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nomor Faktur</label>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Nomor Faktur', 'Invoice Number')}</label>
                   <input value={fakturForm.nomor_faktur} onChange={e => setFakturForm({ ...fakturForm, nomor_faktur: e.target.value })}
                     placeholder="INV/2026/001" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Faktur</label>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Tanggal Faktur', 'Invoice Date')}</label>
                   <input type="date" value={fakturForm.tanggal_faktur} onChange={e => setFakturForm({ ...fakturForm, tanggal_faktur: e.target.value })}
                     className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
@@ -1866,65 +2028,111 @@ const batalRetur = async (row: any) => {
                   <label className="text-xs font-medium text-[#6b7280] mb-1 block">Term of Payment</label>
                   <select value={fakturForm.term_of_payment} onChange={e => setFakturForm({ ...fakturForm, term_of_payment: +e.target.value })}
                     className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
-                    <option value={0}>Tunai (0 hari)</option>
-                    <option value={7}>7 hari</option>
-                    <option value={14}>14 hari</option>
-                    <option value={30}>30 hari</option>
-                    <option value={45}>45 hari</option>
-                    <option value={60}>60 hari</option>
-                    <option value={90}>90 hari</option>
+                    <option value={0}>{t('Tunai (0 hari)', 'Cash (0 days)')}</option>
+                    <option value={7}>7 {t('hari', 'days')}</option>
+                    <option value={14}>14 {t('hari', 'days')}</option>
+                    <option value={30}>30 {t('hari', 'days')}</option>
+                    <option value={45}>45 {t('hari', 'days')}</option>
+                    <option value={60}>60 {t('hari', 'days')}</option>
+                    <option value={90}>90 {t('hari', 'days')}</option>
                   </select>
                 </div>
               </div>
               {fakturForm.nomor_faktur.trim() && (
                 <p className="text-xs text-[#6b7280] mt-2">
-                  Jatuh tempo: <b className="text-[#1e3a2c]">{(() => { const d = new Date(fakturForm.tanggal_faktur); d.setDate(d.getDate() + (Number(fakturForm.term_of_payment) || 0)); return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) })()}</b>
+                  {t('Jatuh tempo', 'Due date')}: <b className="text-[#1e3a2c]">{(() => { const d = new Date(fakturForm.tanggal_faktur); d.setDate(d.getDate() + (Number(fakturForm.term_of_payment) || 0)); return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) })()}</b>
                   {' · '}Total: <b className="text-[#1e3a2c]">Rp {penerimaanItems.reduce((a, b) => a + (b.qty_terima > 0 ? b.qty_terima * b.harga_beli : 0), 0).toLocaleString('id-ID')}</b>
                 </p>
               )}
             </div>
 
             <div className="bg-[#f5f2eb] rounded-lg p-3 mb-4 text-xs text-[#6b7280]">
-              <p>💡 <b>Penerimaan Parsial:</b> Isi qty terima sesuai barang yang datang. Klik "Simpan Parsial" jika ada sisa yang belum datang, atau "Tutup PO" jika selesai.</p>
+              <p>💡 <b>{t('Penerimaan Parsial:', 'Partial Receipt:')}</b> {t('Isi qty terima sesuai barang yang datang. Klik "Simpan Parsial" jika ada sisa yang belum datang, atau "Tutup PO" jika selesai.', 'Enter received qty for arrived goods. Click "Save Partial" if some are still pending, or "Close PO" when complete.')}</p>
             </div>
 
             <div className="flex gap-3">
               <button onClick={() => { setShowPenerimaan(null); setPenerimaanItems([]) }}
-                className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+                className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
               <button onClick={async () => {
                 await supabase.from('purchase_orders').update({ status: 'dibatalkan' }).eq('id', showPenerimaan.id)
                 setShowPenerimaan(null); setPenerimaanItems([]); fetchPOList()
               }} className="px-4 border border-red-200 text-red-500 py-2 rounded-lg text-sm hover:bg-red-50 transition">
-                Batalkan PO
+                {t('Batalkan PO', 'Cancel PO')}
               </button>
               <button onClick={() => submitPenerimaan(false)}
                 className="flex-1 border-2 border-[#1e3a2c] text-[#1e3a2c] py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition">
-                Simpan Parsial
+                {t('Simpan Parsial', 'Save Partial')}
               </button>
               <button onClick={() => submitPenerimaan(true)}
                 className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                Terima & Tutup PO
+                {t('Terima & Tutup PO', 'Receive & Close PO')}
               </button>
             </div>
           </div>
         </div>
       )}
 
+      {/* Modal Layanan Jasa (tambah / edit) */}
+      {(showServiceForm || editService) && (() => {
+        const isEdit = !!editService
+        const val = isEdit ? editService : serviceForm
+        const setVal = (patch: any) => isEdit ? setEditService({ ...editService, ...patch }) : setServiceForm({ ...serviceForm, ...patch })
+        return (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
+            <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">{isEdit ? t('Edit Layanan', 'Edit Service') : t('Tambah Layanan', 'Add Service')}</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Nama Layanan *', 'Service Name *')}</label>
+                <input value={val.nama} onChange={e => setVal({ nama: e.target.value })} placeholder={t('mis. Racikan Resep, Cek Gula Darah', 'e.g. Prescription Compounding, Blood Sugar Check')}
+                  className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Tarif (Rp)', 'Fee (Rp)')}</label>
+                <input type="text" inputMode="numeric" value={val.harga ? val.harga.toLocaleString('id-ID') : ''}
+                  onChange={e => setVal({ harga: +e.target.value.replace(/\D/g, '') || 0 })}
+                  className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" placeholder="0" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Deskripsi', 'Description')}</label>
+                <textarea value={val.deskripsi || ''} onChange={e => setVal({ deskripsi: e.target.value })} rows={2}
+                  className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+              </div>
+              {isEdit && (
+                <div>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Status</label>
+                  <select value={editService.status} onChange={e => setEditService({ ...editService, status: e.target.value })}
+                    className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                    <option value="aktif">{t('Aktif', 'Active')}</option>
+                    <option value="nonaktif">{t('Nonaktif', 'Inactive')}</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-3 mt-5">
+              <button onClick={() => { setShowServiceForm(false); setEditService(null) }} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
+              <button onClick={isEdit ? handleUpdateService : handleTambahService} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">{t('Simpan', 'Save')}</button>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
+
       {/* Modal Ubah Masa Aktif (super admin) */}
       {showMasaAktif && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-            <h2 className="text-lg font-bold text-[#1e3a2c] mb-1">Ubah Masa Aktif</h2>
+            <h2 className="text-lg font-bold text-[#1e3a2c] mb-1">{t('Ubah Masa Aktif', 'Change Validity')}</h2>
             <p className="text-xs text-[#6b7280] mb-4">{showMasaAktif.nama}</p>
-            <label className="text-xs font-medium text-[#6b7280] mb-1 block">Valid sampai</label>
+            <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Valid sampai', 'Valid until')}</label>
             <input type="date" value={masaAktifDate} onChange={e => setMasaAktifDate(e.target.value)}
               className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
             <button onClick={() => simpanMasaAktif(true)} className="mt-2 text-xs text-[#1e3a2c] font-medium hover:underline">
-              Set tanpa batas
+              {t('Set tanpa batas', 'Set unlimited')}
             </button>
             <div className="flex gap-3 mt-5">
-              <button onClick={() => setShowMasaAktif(null)} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
-              <button onClick={() => simpanMasaAktif(false)} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">Simpan &amp; Aktifkan</button>
+              <button onClick={() => setShowMasaAktif(null)} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
+              <button onClick={() => simpanMasaAktif(false)} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">{t('Simpan & Aktifkan', 'Save & Activate')}</button>
             </div>
           </div>
         </div>
@@ -1935,28 +2143,28 @@ const batalRetur = async (row: any) => {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
             <div className="mb-4">
-              <h2 className="text-lg font-bold text-[#1e3a2c]">Bayar Faktur</h2>
+              <h2 className="text-lg font-bold text-[#1e3a2c]">{t('Bayar Faktur', 'Pay Invoice')}</h2>
               <p className="text-xs text-[#6b7280]">{showBayar.nomor_faktur} · {showBayar.suppliers?.nama_supplier}</p>
             </div>
             <div className="bg-[#f5f2eb] rounded-xl p-4 mb-4 flex items-center justify-between">
               <div>
-                <p className="text-xs text-[#6b7280]">Jumlah Tagihan</p>
+                <p className="text-xs text-[#6b7280]">{t('Jumlah Tagihan', 'Amount Due')}</p>
                 <p className="text-xl font-bold text-[#1e3a2c]">Rp {(showBayar.total || 0).toLocaleString('id-ID')}</p>
               </div>
               <div className="text-right">
-                <p className="text-xs text-[#6b7280]">Jatuh Tempo</p>
+                <p className="text-xs text-[#6b7280]">{t('Jatuh Tempo', 'Due Date')}</p>
                 <p className="text-sm font-medium text-[#1e3a2c]">{showBayar.tanggal_jatuh_tempo ? new Date(showBayar.tanggal_jatuh_tempo).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</p>
               </div>
             </div>
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Tanggal Bayar</label>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Tanggal Bayar', 'Payment Date')}</label>
                   <input type="date" value={bayarForm.tanggal_bayar} onChange={e => setBayarForm({ ...bayarForm, tanggal_bayar: e.target.value })}
                     className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode</label>
+                  <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Metode', 'Method')}</label>
                   <select value={bayarForm.metode_bayar} onChange={e => setBayarForm({ ...bayarForm, metode_bayar: e.target.value })}
                     className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                     <option>Transfer</option><option>QRIS</option><option>Tunai</option><option>Debit</option><option>Giro</option><option>Cek</option>
@@ -1964,14 +2172,14 @@ const batalRetur = async (row: any) => {
                 </div>
               </div>
               <div>
-                <label className="text-xs font-medium text-[#6b7280] mb-1 block">Catatan</label>
+                <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Catatan', 'Notes')}</label>
                 <input value={bayarForm.catatan_bayar} onChange={e => setBayarForm({ ...bayarForm, catatan_bayar: e.target.value })}
-                  placeholder="No. referensi / bank (opsional)" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                  placeholder={t('No. referensi / bank (opsional)', 'Reference no. / bank (optional)')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
               </div>
             </div>
             <div className="flex gap-3 mt-5">
-              <button onClick={() => setShowBayar(null)} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
-              <button onClick={submitBayar} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">Tandai Lunas</button>
+              <button onClick={() => setShowBayar(null)} className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
+              <button onClick={submitBayar} className="flex-1 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">{t('Tandai Lunas', 'Mark as Paid')}</button>
             </div>
           </div>
         </div>
@@ -2008,19 +2216,19 @@ const batalRetur = async (row: any) => {
                   <span>Total</span><span>Rp {lastTrx.total?.toLocaleString('id-ID')}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
-                  <span>Bayar ({lastTrx.metode_bayar || 'Tunai'})</span><span>Rp {lastTrx.bayar?.toLocaleString('id-ID')}</span>
+                  <span>{t('Bayar', 'Paid')} ({lastTrx.metode_bayar || 'Tunai'})</span><span>Rp {lastTrx.bayar?.toLocaleString('id-ID')}</span>
                 </div>
                 <div className="flex justify-between text-gray-500">
-                  <span>Kembalian</span><span>Rp {lastTrx.kembalian?.toLocaleString('id-ID')}</span>
+                  <span>{t('Kembalian', 'Change')}</span><span>Rp {lastTrx.kembalian?.toLocaleString('id-ID')}</span>
                 </div>
               </div>
               <p className="text-center text-xs text-gray-400 mt-4 border-t border-dashed border-gray-300 pt-3">
-                Terima kasih atas kunjungan Anda
+                {t('Terima kasih atas kunjungan Anda', 'Thank you for your visit')}
               </p>
             </div>
             <div className="flex gap-2 p-4 border-t border-gray-100">
               <button onClick={() => setShowStruk(false)}
-                className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Tutup</button>
+                className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Tutup', 'Close')}</button>
               <button onClick={() => {
                 const win = window.open('', '_blank', 'width=350,height=600')
                 win?.document.write(`<html><head><title>Struk</title><style>
@@ -2060,7 +2268,7 @@ const batalRetur = async (row: any) => {
                 win?.document.close()
                 win?.print()
               }} className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
-                🖨️ Print
+                🖨️ {t('Cetak', 'Print')}
               </button>
             </div>
           </div>
@@ -2078,7 +2286,7 @@ const batalRetur = async (row: any) => {
         {/* Backdrop (mobile) */}
         {mobileNavOpen && <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={() => setMobileNavOpen(false)} />}
         {/* Sidebar */}
-        <div className={`${sidebarCollapsed ? 'md:w-20' : 'md:w-64'} w-64 bg-gradient-to-b from-[#1e3a2c] via-[#213829] to-[#2c3320] flex flex-col transition-transform md:transition-[width] duration-200 shrink-0 fixed md:static inset-y-0 left-0 z-50 md:z-auto ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
+        <div className={`${sidebarCollapsed ? 'md:w-20' : 'md:w-64'} w-64 bg-gradient-to-b from-[#1e3a2c] via-[#213829] to-[#2c3320] flex flex-col transition-transform md:transition-[width] duration-200 shrink-0 fixed md:sticky md:top-0 md:h-screen inset-y-0 left-0 z-50 md:z-auto ${mobileNavOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0`}>
           <div className={`${sidebarCollapsed ? 'px-3' : 'px-5'} py-5`}>
             <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
               <div className="relative w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center shrink-0">
@@ -2112,7 +2320,7 @@ const batalRetur = async (row: any) => {
               </div>
             )}
           </div>
-          <nav className="flex-1 px-3 py-2 space-y-1">
+          <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-1">
             {menuItems.filter(item => allowedPages.includes(item.id)).map((item) => {
               const Icon = item.icon
               return (
@@ -2160,19 +2368,19 @@ const batalRetur = async (row: any) => {
           {activePage === 'companies' && isSuper && (
             <div>
               <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Companies</h1>
-              <p className="text-[#6b7280] text-sm mb-6">{companies.length} apotek terdaftar</p>
+              <p className="text-[#6b7280] text-sm mb-6">{companies.length} {t('apotek terdaftar', 'registered pharmacies')}</p>
               <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl overflow-x-auto">
                 {companies.length === 0 ? (
-                  <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada apotek yang mendaftar.</p>
+                  <p className="text-center text-[#9ca3af] py-12 text-sm">{t('Belum ada apotek yang mendaftar.', 'No pharmacies have registered yet.')}</p>
                 ) : (
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="text-[#9ca3af] border-b border-[#f0ede6]">
-                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">Company</th>
+                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">{t('Company', 'Company')}</th>
                         <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">Admin</th>
                         <th className="text-center px-5 py-3 text-xs font-semibold uppercase tracking-wide">User</th>
                         <th className="text-center px-5 py-3 text-xs font-semibold uppercase tracking-wide">Status</th>
-                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">Valid Sampai</th>
+                        <th className="text-left px-5 py-3 text-xs font-semibold uppercase tracking-wide">{t('Valid Sampai', 'Valid Until')}</th>
                         <th className="text-right px-5 py-3 text-xs font-semibold uppercase tracking-wide"></th>
                       </tr>
                     </thead>
@@ -2190,21 +2398,21 @@ const batalRetur = async (row: any) => {
                           <td className="px-5 py-4 text-center text-[#1c2620]">{c.user_count ?? 1}</td>
                           <td className="px-5 py-4 text-center">
                             <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium ${c.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                              {c.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                              {c.status === 'aktif' ? t('Aktif', 'Active') : t('Nonaktif', 'Inactive')}
                             </span>
                           </td>
                           <td className="px-5 py-4 text-[#6b7280]">
-                            {c.valid_sampai ? new Date(c.valid_sampai).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : 'Tanpa batas'}
+                            {c.valid_sampai ? new Date(c.valid_sampai).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : t('Tanpa batas', 'Unlimited')}
                           </td>
                           <td className="px-5 py-4">
                             <div className="flex items-center justify-end gap-2">
                               <button onClick={() => toggleCompanyStatus(c)}
                                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${c.status === 'aktif' ? 'border-[#e0b3a0] text-[#a75a34] hover:bg-[#f0dcd2]' : 'border-green-300 text-green-700 hover:bg-green-50'}`}>
-                                {c.status === 'aktif' ? 'Nonaktifkan' : 'Aktifkan'}
+                                {c.status === 'aktif' ? t('Nonaktifkan', 'Deactivate') : t('Aktifkan', 'Activate')}
                               </button>
                               <button onClick={() => { setMasaAktifDate(c.valid_sampai || ''); setShowMasaAktif(c) }}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[#1e3a2c] text-white hover:bg-[#24462f] transition">
-                                Ubah Masa Aktif
+                                {t('Ubah Masa Aktif', 'Change Validity')}
                               </button>
                             </div>
                           </td>
@@ -2220,16 +2428,16 @@ const batalRetur = async (row: any) => {
           {/* DASHBOARD */}
           {activePage === 'dashboard' && (
             <div>
-              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Dashboard</h1>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Dashboard', 'Dashboard')}</h1>
               <p className="text-[#6b7280] text-sm mb-8">
-                Halo, <span className="font-semibold text-[#1c2620]">{settingsData.nama_apoteker || 'Apoteker'}</span> 👋 — ringkasan aktivitas apotek hari ini
+                {t('Halo', 'Hello')}, <span className="font-semibold text-[#1c2620]">{settingsData.nama_apoteker || t('Apoteker', 'Pharmacist')}</span> 👋 — {t('ringkasan aktivitas apotek hari ini', "today's pharmacy activity summary")}
               </p>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
                 {[
-                  { label: 'Total Produk', value: statProduk, desc: 'Item terdaftar', Icon: Pill, chip: 'bg-[#dce5db] text-[#2f5741]' },
-                  { label: 'Transaksi Hari Ini', value: statTrxHariIni, desc: 'Penjualan hari ini', Icon: ShoppingCart, chip: 'bg-[#dce5db] text-[#2f5741]' },
-                  { label: 'Expired ≤ 60 Hari', value: statExpired, desc: 'Batch mendekati / lewat exp', Icon: CalendarClock, chip: 'bg-[#f5e6c8] text-[#8a6d1f]' },
-                  { label: 'Omzet Hari Ini', value: `Rp ${statOmzet.toLocaleString('id-ID')}`, desc: 'Total penjualan', Icon: Wallet, chip: 'bg-[#f0dcd2] text-[#a75a34]' },
+                  { label: t('Total Produk', 'Total Products'), value: statProduk, desc: t('Item terdaftar', 'Registered items'), Icon: Pill, chip: 'bg-[#dce5db] text-[#2f5741]' },
+                  { label: t('Transaksi Hari Ini', 'Sales Today'), value: statTrxHariIni, desc: t('Penjualan hari ini', "Today's sales"), Icon: ShoppingCart, chip: 'bg-[#dce5db] text-[#2f5741]' },
+                  { label: t('Expired ≤ 60 Hari', 'Expiring ≤ 60 Days'), value: statExpired, desc: t('Batch mendekati / lewat exp', 'Batches near / past expiry'), Icon: CalendarClock, chip: 'bg-[#f5e6c8] text-[#8a6d1f]' },
+                  { label: t('Omzet Hari Ini', 'Revenue Today'), value: `Rp ${statOmzet.toLocaleString('id-ID')}`, desc: t('Total penjualan', 'Total sales'), Icon: Wallet, chip: 'bg-[#f0dcd2] text-[#a75a34]' },
                 ].map((s, i) => (
                   <div key={i} className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
                     <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 ${s.chip}`}>
@@ -2241,26 +2449,154 @@ const batalRetur = async (row: any) => {
                   </div>
                 ))}
               </div>
+
+              {/* Grafik penjualan + Produk terlaris */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
+                <div className="lg:col-span-2 bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="flex items-start justify-between mb-4 gap-3">
+                    <div>
+                      <h3 className="font-bold text-[#1c2620]">{chartRange === '7d' ? t('Penjualan 7 Hari Terakhir', 'Sales — Last 7 Days') : t('Penjualan 30 Hari Terakhir', 'Sales — Last 30 Days')}</h3>
+                      <p className="text-xs text-[#9ca3af]">{t('Total omzet per hari', 'Daily revenue')}</p>
+                    </div>
+                    <div className="flex flex-col items-end gap-2">
+                      <p className="text-lg font-bold text-[#1e3a2c] leading-none">Rp {salesChart.reduce((a, b) => a + (b.value || 0), 0).toLocaleString('id-ID')}</p>
+                      <div className="inline-flex rounded-lg bg-[#eef0ea] p-0.5 text-xs font-medium">
+                        {(['7d', '30d'] as const).map(r => (
+                          <button key={r} onClick={() => setChartRange(r)}
+                            className={`px-2.5 py-1 rounded-md transition-all ${chartRange === r ? 'bg-white text-[#1e3a2c] shadow-sm' : 'text-[#6b7280] hover:text-[#1c2620]'}`}>
+                            {r === '7d' ? t('7 Hari', '7 Days') : t('30 Hari', '30 Days')}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  {(() => {
+                    const fallbackN = chartRange === '30d' ? 30 : 7
+                    const data = salesChart.length ? salesChart : Array.from({ length: fallbackN }, () => ({ label: '', day: '', value: 0 }))
+                    const max = Math.max(...data.map((d: any) => d.value), 1)
+                    const n = data.length
+                    const dense = n > 10
+                    const X = (i: number) => 14 + (i / (n - 1)) * 292
+                    const Y = (v: number) => 104 - (v / max) * 82
+                    const line = data.map((d: any, i: number) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(d.value).toFixed(1)}`).join(' ')
+                    const area = `${line} L${X(n - 1).toFixed(1)},112 L${X(0).toFixed(1)},112 Z`
+                    // Panjang garis untuk animasi "draw"
+                    const pathLen = 320
+                    return (
+                      <div>
+                        <svg key={chartRange} viewBox="0 0 320 130" className="w-full h-40 sw-chart">
+                          <defs>
+                            <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#1e3a2c" stopOpacity="0.22" />
+                              <stop offset="100%" stopColor="#1e3a2c" stopOpacity="0" />
+                            </linearGradient>
+                          </defs>
+                          {[0, 0.5, 1].map((g, i) => <line key={i} x1="14" x2="306" y1={104 - g * 82} y2={104 - g * 82} stroke="#eceae3" strokeWidth="1" />)}
+                          <path className="sw-chart-area" d={area} fill="url(#salesFill)" />
+                          <path className="sw-chart-line" d={line} fill="none" stroke="#1e3a2c" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
+                            style={{ strokeDasharray: pathLen, strokeDashoffset: pathLen }} />
+                          {!dense && data.map((d: any, i: number) => <circle className="sw-chart-dot" key={i} cx={X(i)} cy={Y(d.value)} r="3" fill="#1e3a2c" style={{ animationDelay: `${0.5 + i * 0.05}s` }} />)}
+                          {data.map((d: any, i: number) => d.label ? <text key={'t' + i} x={X(i)} y="124" textAnchor="middle" fontSize="9" fill="#9ca3af">{d.label}</text> : null)}
+                        </svg>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <h3 className="font-bold text-[#1c2620] mb-1">{t('Produk Terlaris', 'Best Sellers')}</h3>
+                  <p className="text-xs text-[#9ca3af] mb-4">{t('30 hari terakhir', 'Last 30 days')}</p>
+                  {bestSellers.length === 0 ? (
+                    <p className="text-center text-xs text-[#9ca3af] py-8">{t('Belum ada penjualan', 'No sales yet')}</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {bestSellers.map((b: any, i: number) => {
+                        const maxQty = bestSellers[0].qty || 1
+                        return (
+                          <div key={i}>
+                            <div className="flex justify-between text-xs mb-1">
+                              <span className="font-medium text-[#1c2620] truncate pr-2">{i + 1}. {b.nama}</span>
+                              <span className="text-[#6b7280] shrink-0">{b.qty}</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-[#eef0ea] overflow-hidden">
+                              <div className="h-full rounded-full bg-[#2f5741]" style={{ width: `${Math.max(6, (b.qty / maxQty) * 100)}%` }} />
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Stok minim + Segera expired */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center"><Pill size={16} /></div>
+                    <h3 className="font-bold text-[#1c2620]">{t('Stok Minim', 'Low Stock')}</h3>
+                  </div>
+                  {lowStock.length === 0 ? (
+                    <p className="text-center text-xs text-[#9ca3af] py-6">{t('Semua stok aman 👍', 'All stock is healthy 👍')}</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {lowStock.map((p: any, i: number) => (
+                        <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b border-[#f0ede6] last:border-0">
+                          <span className="text-[#1c2620] truncate pr-2">{p.nama_obat}</span>
+                          <span className="shrink-0 text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">{p.stok_total} / {p.stok_minimum}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-lg bg-[#f5e6c8] text-[#8a6d1f] flex items-center justify-center"><CalendarClock size={16} /></div>
+                    <h3 className="font-bold text-[#1c2620]">{t('Segera Expired (≤60 hari)', 'Expiring Soon (≤60 days)')}</h3>
+                  </div>
+                  {expiringSoon.length === 0 ? (
+                    <p className="text-center text-xs text-[#9ca3af] py-6">{t('Tidak ada batch mendekati expired', 'No batches nearing expiry')}</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {expiringSoon.map((b: any, i: number) => {
+                        const days = Math.ceil((new Date(b.expired_date).getTime() - Date.now()) / 86400000)
+                        return (
+                          <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b border-[#f0ede6] last:border-0">
+                            <div className="min-w-0 pr-2">
+                              <p className="text-[#1c2620] truncate">{b.products?.nama_obat}</p>
+                              <p className="text-[10px] text-[#9ca3af]">{t('Batch', 'Batch')} {b.batch_number || '-'} · {t('sisa', 'qty')} {b.stok_batch}</p>
+                            </div>
+                            <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${days <= 0 ? 'bg-red-200 text-red-800' : days <= 30 ? 'bg-red-50 text-red-600' : 'bg-yellow-50 text-yellow-700'}`}>
+                              {days <= 0 ? t('Expired', 'Expired') : `${days} ${t('hari', 'days')}`}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
           {/* TINDAK LANJUT — Riwayat Barang Expired */}
           {activePage === 'tindaklanjut' && (
             <div>
-              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Tindak Lanjut Barang Expired</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Riwayat pemusnahan & retur atas batch yang expired / mendekati expired</p>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Tindak Lanjut Barang Expired', 'Expired Goods Follow-up')}</h1>
+              <p className="text-[#6b7280] text-sm mb-6">{t('Riwayat pemusnahan & retur atas batch yang expired / mendekati expired', 'History of destruction & returns for expired / near-expiry batches')}</p>
 
               {/* Tabs */}
               <div className="flex gap-1 mb-5">
                 {([
-                  { id: 'musnahkan', label: `Pemusnahan (${riwayatMusnah.length})` },
-                  { id: 'retur', label: `Retur Supplier (${riwayatRetur.length})` },
-                ] as const).map(t => (
-                  <button key={t.id} onClick={() => setTindakLanjutTab(t.id)}
+                  { id: 'musnahkan', label: `${t('Pemusnahan', 'Destruction')} (${riwayatMusnah.length})` },
+                  { id: 'retur', label: `${t('Retur Supplier', 'Supplier Returns')} (${riwayatRetur.length})` },
+                ] as const).map(tab => (
+                  <button key={tab.id} onClick={() => setTindakLanjutTab(tab.id)}
                     className={`px-4 py-2 rounded-xl text-sm font-medium transition ${
-                      tindakLanjutTab === t.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'
+                      tindakLanjutTab === tab.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'
                     }`}>
-                    {t.label}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -2269,7 +2605,7 @@ const batalRetur = async (row: any) => {
                 {/* PEMUSNAHAN */}
                 {tindakLanjutTab === 'musnahkan' && (
                   riwayatMusnah.length === 0 ? (
-                    <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada riwayat pemusnahan</p>
+                    <p className="text-center text-[#9ca3af] py-12 text-sm">{t('Belum ada riwayat pemusnahan', 'No destruction history yet')}</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
@@ -2311,7 +2647,7 @@ const batalRetur = async (row: any) => {
                 {/* RETUR */}
                 {tindakLanjutTab === 'retur' && (
                   riwayatRetur.length === 0 ? (
-                    <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada riwayat retur</p>
+                    <p className="text-center text-[#9ca3af] py-12 text-sm">{t('Belum ada riwayat retur', 'No return history yet')}</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
@@ -2381,43 +2717,43 @@ const batalRetur = async (row: any) => {
             const terlambat = belumLunas.filter(f => f.tanggal_jatuh_tempo && new Date(f.tanggal_jatuh_tempo) < today).length
             return (
             <div>
-              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Pembayaran Faktur</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Faktur pembelian diurutkan berdasarkan jatuh tempo terdekat</p>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Pembayaran Faktur', 'Invoice Payments')}</h1>
+              <p className="text-[#6b7280] text-sm mb-6">{t('Faktur pembelian diurutkan berdasarkan jatuh tempo terdekat', 'Purchase invoices sorted by nearest due date')}</p>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-6">
                 <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 bg-[#f0dcd2] text-[#a75a34]"><Wallet size={20} strokeWidth={1.9} /></div>
-                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">Total Hutang Belum Lunas</p>
+                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">{t('Total Hutang Belum Lunas', 'Total Unpaid Debt')}</p>
                   <p className="text-2xl font-bold text-[#1c2620] leading-none">Rp {totalHutang.toLocaleString('id-ID')}</p>
                 </div>
                 <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 bg-[#f5e6c8] text-[#8a6d1f]"><Receipt size={20} strokeWidth={1.9} /></div>
-                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">Faktur Belum Lunas</p>
+                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">{t('Faktur Belum Lunas', 'Unpaid Invoices')}</p>
                   <p className="text-2xl font-bold text-[#1c2620] leading-none">{belumLunas.length}</p>
                 </div>
                 <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
                   <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-4 bg-red-100 text-red-600"><CalendarClock size={20} strokeWidth={1.9} /></div>
-                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">Lewat Jatuh Tempo</p>
+                  <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">{t('Lewat Jatuh Tempo', 'Overdue')}</p>
                   <p className="text-2xl font-bold text-[#1c2620] leading-none">{terlambat}</p>
                 </div>
               </div>
 
               <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl overflow-x-auto">
                 {fakturList.length === 0 ? (
-                  <p className="text-center text-[#9ca3af] py-12 text-sm">Belum ada faktur. Faktur otomatis tercatat saat penerimaan barang.</p>
+                  <p className="text-center text-[#9ca3af] py-12 text-sm">{t('Belum ada faktur. Faktur otomatis tercatat saat penerimaan barang.', 'No invoices yet. Invoices are recorded automatically during goods receipt.')}</p>
                 ) : (
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-[#1e3a2c] text-[#e8efe9]">
-                        <th className="text-left px-4 py-3 text-xs font-medium">No. Faktur</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">{t('No. Faktur', 'Invoice No.')}</th>
                         <th className="text-left px-4 py-3 text-xs font-medium">Supplier</th>
                         <th className="text-left px-4 py-3 text-xs font-medium">PO</th>
-                        <th className="text-left px-4 py-3 text-xs font-medium">Tgl Faktur</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">{t('Tgl Faktur', 'Invoice Date')}</th>
                         <th className="text-center px-4 py-3 text-xs font-medium">TOP</th>
-                        <th className="text-left px-4 py-3 text-xs font-medium">Jatuh Tempo</th>
+                        <th className="text-left px-4 py-3 text-xs font-medium">{t('Jatuh Tempo', 'Due Date')}</th>
                         <th className="text-right px-4 py-3 text-xs font-medium">Total</th>
                         <th className="text-center px-4 py-3 text-xs font-medium">Status</th>
-                        <th className="text-center px-4 py-3 text-xs font-medium">Aksi</th>
+                        <th className="text-center px-4 py-3 text-xs font-medium">{t('Aksi', 'Action')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2431,29 +2767,29 @@ const batalRetur = async (row: any) => {
                             <td className="px-4 py-3 text-[#1c2620]">{f.suppliers?.nama_supplier || '-'}</td>
                             <td className="px-4 py-3 font-mono text-xs text-[#6b7280]">{f.purchase_orders?.nomor_po || '-'}</td>
                             <td className="px-4 py-3 text-xs text-[#6b7280]">{f.tanggal_faktur ? new Date(f.tanggal_faktur).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</td>
-                            <td className="px-4 py-3 text-center text-xs text-[#6b7280]">{f.term_of_payment === 0 ? 'Tunai' : `${f.term_of_payment} hr`}</td>
+                            <td className="px-4 py-3 text-center text-xs text-[#6b7280]">{f.term_of_payment === 0 ? t('Tunai', 'Cash') : `${f.term_of_payment} ${t('hr', 'd')}`}</td>
                             <td className="px-4 py-3 text-xs">
                               <span className={overdue ? 'text-red-600 font-semibold' : dueSoon ? 'text-amber-600 font-medium' : 'text-[#6b7280]'}>
                                 {jt ? jt.toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
                               </span>
-                              {overdue && <span className="block text-[10px] text-red-500">terlambat</span>}
+                              {overdue && <span className="block text-[10px] text-red-500">{t('terlambat', 'overdue')}</span>}
                             </td>
                             <td className="px-4 py-3 text-right font-medium text-[#1c2620] tabular-nums">Rp {(f.total || 0).toLocaleString('id-ID')}</td>
                             <td className="px-4 py-3 text-center">
                               <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${f.status === 'lunas' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                {f.status === 'lunas' ? 'Lunas' : 'Belum Lunas'}
+                                {f.status === 'lunas' ? t('Lunas', 'Paid') : t('Belum Lunas', 'Unpaid')}
                               </span>
                             </td>
                             <td className="px-4 py-3 text-center">
                               {f.status === 'lunas' ? (
                                 <button onClick={() => cetakBuktiBayar(f)}
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#d1cdc4] text-[#1e3a2c] text-xs font-medium hover:bg-[#f5f2eb] transition">
-                                  <Printer size={13} /> Cetak Bukti
+                                  <Printer size={13} /> {t('Cetak Bukti', 'Print Receipt')}
                                 </button>
                               ) : (
                                 <button onClick={() => { setBayarForm({ tanggal_bayar: new Date().toISOString().split('T')[0], metode_bayar: 'Transfer', catatan_bayar: '' }); setShowBayar(f) }}
                                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1e3a2c] text-white text-xs font-medium hover:bg-[#24462f] transition">
-                                  <CreditCard size={13} /> Bayar
+                                  <CreditCard size={13} /> {t('Bayar', 'Pay')}
                                 </button>
                               )}
                             </td>
@@ -2473,12 +2809,12 @@ const batalRetur = async (row: any) => {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Produk & Stok</h1>
-                  <p className="text-[#6b7280] text-sm">Daftar semua produk obat di apotek</p>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">{t('Produk & Stok', 'Products & Stock')}</h1>
+                  <p className="text-[#6b7280] text-sm">{t('Daftar semua produk obat di apotek', 'All medicine products in the pharmacy')}</p>
                 </div>
                 <button onClick={() => setShowForm(true)}
                   className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                  + Tambah Produk
+                  + {t('Tambah Produk', 'Add Product')}
                 </button>
               </div>
 
@@ -2537,28 +2873,28 @@ const batalRetur = async (row: any) => {
               {showForm && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl">
-                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Tambah Produk Baru</h2>
+                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">{t('Tambah Produk Baru', 'Add New Product')}</h2>
                     <div className="space-y-3">
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Obat *</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Nama Obat *', 'Drug Name *')}</label>
                           <input value={form.nama_obat} onChange={e => setForm({...form, nama_obat: e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Generik</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Nama Generik', 'Generic Name')}</label>
                           <input value={form.nama_generik} onChange={e => setForm({...form, nama_generik: e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kandungan / Komposisi</label>
+                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Kandungan / Komposisi', 'Ingredient / Composition')}</label>
                         <input value={form.kandungan} onChange={e => setForm({...form, kandungan: e.target.value})}
                           className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Kategori</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Kategori', 'Category')}</label>
                           <select value={form.kategori} onChange={e => setForm({...form, kategori: e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                             <option value="bebas">Bebas</option>
@@ -2573,7 +2909,7 @@ const batalRetur = async (row: any) => {
                           </select>
                         </div>
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Satuan</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Satuan', 'Unit')}</label>
                           <select value={form.satuan} onChange={e => setForm({...form, satuan: e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                             <option>Tablet</option><option>Kapsul</option><option>Botol</option>
@@ -2583,17 +2919,17 @@ const batalRetur = async (row: any) => {
                       </div>
                       <div className="grid grid-cols-3 gap-3">
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Beli</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Harga Beli', 'Buy Price')}</label>
                           <input type="number" value={form.harga_beli} onChange={e => setForm({...form, harga_beli: +e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Harga Jual</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Harga Jual', 'Sell Price')}</label>
                           <input type="number" value={form.harga_jual} onChange={e => setForm({...form, harga_jual: +e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                         <div>
-                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">Stok Awal</label>
+                          <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Stok Awal', 'Opening Stock')}</label>
                           <input type="number" value={form.stok_total} onChange={e => setForm({...form, stok_total: +e.target.value})}
                             className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
@@ -2601,16 +2937,16 @@ const batalRetur = async (row: any) => {
                     </div>
                     <div className="flex gap-3 mt-5">
                       <button onClick={() => setShowForm(false)}
-                        className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+                        className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
                       <button onClick={handleTambahProduk}
-                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Simpan Produk</button>
+                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">{t('Simpan Produk', 'Save Product')}</button>
                     </div>
                   </div>
                 </div>
               )}
 
               <div className="mb-4">
-                <input type="text" placeholder="Cari nama obat, generik, atau kandungan..."
+                <input type="text" placeholder={t('Cari nama obat, generik, atau kandungan...', 'Search drug name, generic, or ingredient...')}
                   value={search} onChange={(e) => setSearch(e.target.value)}
                   className="w-full border border-[#d1cdc4] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1e3a2c] placeholder-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
               </div>
@@ -2619,21 +2955,21 @@ const batalRetur = async (row: any) => {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Kode</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Nama Obat</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Kategori</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Satuan</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">H. Jual</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Stok</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Kode', 'Code')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Nama Obat', 'Drug Name')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Kategori', 'Category')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Satuan', 'Unit')}</th>
+                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('H. Jual', 'Sell Price')}</th>
+                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Stok', 'Stock')}</th>
                       <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
                       <th className="px-4 py-3"></th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td className="px-4 py-8 text-center text-[#9ca3af]" colSpan={8}>Memuat data...</td></tr>
+                      <tr><td className="px-4 py-8 text-center text-[#9ca3af]" colSpan={8}>{t('Memuat data...', 'Loading data...')}</td></tr>
                     ) : filteredProducts.length === 0 ? (
-                      <tr><td className="px-4 py-8 text-center text-[#9ca3af]" colSpan={8}>Tidak ada produk ditemukan</td></tr>
+                      <tr><td className="px-4 py-8 text-center text-[#9ca3af]" colSpan={8}>{t('Tidak ada produk ditemukan', 'No products found')}</td></tr>
                     ) : (
                       filteredProducts.map((p) => (
                         <tr key={p.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
@@ -2656,7 +2992,7 @@ const batalRetur = async (row: any) => {
                           <td className="px-4 py-3 text-center">
                             <div className="flex items-center justify-center gap-2">
                               <button onClick={() => openProdukDetail(p)}
-                                className="text-xs text-blue-600 hover:underline font-medium">Detail</button>
+                                className="text-xs text-blue-600 hover:underline font-medium">{t('Detail', 'Details')}</button>
                               <span className="text-[#d1cdc4]">|</span>
                               <button onClick={() => {
                                 setEditProduk(p)
@@ -2679,14 +3015,14 @@ const batalRetur = async (row: any) => {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Kasir</h1>
-                  <p className="text-[#6b7280] text-sm">Transaksi penjualan obat</p>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">{t('Kasir', 'Cashier')}</h1>
+                  <p className="text-[#6b7280] text-sm">{t('Transaksi penjualan obat', 'Medicine sales transactions')}</p>
                 </div>
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6">
                 <div className="lg:col-span-3 space-y-4">
                   <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-4">
-                    <input type="text" placeholder="Cari obat by nama, generik, atau kandungan..."
+                    <input type="text" placeholder={t('Cari obat by nama, generik, atau kandungan...', 'Search by name, generic, or ingredient...')}
                       value={search} onChange={(e) => { setSearch(e.target.value); if (e.target.value.length > 1) fetchProducts() }}
                       className="w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                     {search && (
@@ -2700,9 +3036,24 @@ const batalRetur = async (row: any) => {
                           }} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-[#f5f2eb] cursor-pointer">
                             <div>
                               <div className="text-sm font-medium text-[#1e3a2c]">{p.nama_obat}</div>
-                              <div className="text-xs text-[#9ca3af]">{p.nama_generik} · Stok: {p.stok_total}</div>
+                              <div className="text-xs text-[#9ca3af]">{p.nama_generik} · {t('Stok', 'Stock')}: {p.stok_total}</div>
                             </div>
                             <div className="text-sm font-medium text-[#1e3a2c]">Rp {p.harga_jual?.toLocaleString('id-ID')}</div>
+                          </div>
+                        ))}
+                        {services.filter((s: any) => s.status === 'aktif' && s.nama?.toLowerCase().includes(search.toLowerCase())).map((s: any) => (
+                          <div key={'svc-' + s.id} onClick={() => {
+                            const kid = 'svc-' + s.id
+                            const exists = keranjang.find(k => k.id === kid)
+                            if (exists) { setKeranjang(keranjang.map(k => k.id === kid ? {...k, jumlah: k.jumlah + 1} : k)) }
+                            else { setKeranjang([...keranjang, { id: kid, nama_obat: s.nama, harga_jual: s.harga || 0, jumlah: 1, is_jasa: true, kategori: 'jasa', stok_total: 0 }]) }
+                            setSearch('')
+                          }} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-[#eef0ea] cursor-pointer">
+                            <div>
+                              <div className="text-sm font-medium text-[#1e3a2c]">{s.nama}</div>
+                              <div className="text-xs text-[#2f5741] inline-flex items-center gap-1"><HeartPulse size={11} /> {t('Layanan Jasa', 'Service')}</div>
+                            </div>
+                            <div className="text-sm font-medium text-[#1e3a2c]">Rp {(s.harga || 0).toLocaleString('id-ID')}</div>
                           </div>
                         ))}
                       </div>
@@ -2712,16 +3063,16 @@ const batalRetur = async (row: any) => {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b border-[#f0ede6]">
-                          <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Produk</th>
+                          <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Produk', 'Product')}</th>
                           <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Qty</th>
-                          <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Harga</th>
+                          <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Harga', 'Price')}</th>
                           <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Subtotal</th>
                           <th className="px-4 py-3"></th>
                         </tr>
                       </thead>
                       <tbody>
                         {keranjang.length === 0 ? (
-                          <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada produk — cari obat di atas</td></tr>
+                          <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada produk — cari obat di atas', 'No products yet — search above')}</td></tr>
                         ) : (
                           keranjang.map(item => (
                             <tr key={item.id} className="border-b border-[#f0ede6]">
@@ -2755,11 +3106,11 @@ const batalRetur = async (row: any) => {
                 </div>
                 <div className="lg:col-span-2">
                   <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-5">
-                    <h3 className="font-semibold text-[#1e3a2c] mb-4">Ringkasan Transaksi</h3>
+                    <h3 className="font-semibold text-[#1e3a2c] mb-4">{t('Ringkasan Transaksi', 'Transaction Summary')}</h3>
                     <div className="space-y-2 mb-4">
                       <div className="flex justify-between text-sm">
-                        <span className="text-[#6b7280]">Total Item</span>
-                        <span className="text-[#1e3a2c]">{keranjang.reduce((a, b) => a + b.jumlah, 0)} item</span>
+                        <span className="text-[#6b7280]">{t('Total Item', 'Total Items')}</span>
+                        <span className="text-[#1e3a2c]">{keranjang.reduce((a, b) => a + b.jumlah, 0)} {t('item', 'items')}</span>
                       </div>
                       <div className="flex justify-between text-sm font-semibold border-t border-[#f0ede6] pt-2">
                         <span className="text-[#1e3a2c]">Total</span>
@@ -2768,21 +3119,21 @@ const batalRetur = async (row: any) => {
                     </div>
                     {keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori)) && (
                       <div className="mb-4 p-3 rounded-xl border border-amber-300 bg-amber-50 space-y-2">
-                        <p className="text-xs font-semibold text-amber-800">⚠️ Ada obat Narkotika/Psikotropika/Prekursor — wajib isi data pasien &amp; resep</p>
+                        <p className="text-xs font-semibold text-amber-800">⚠️ {t('Ada obat Narkotika/Psikotropika/Prekursor — wajib isi data pasien & resep', 'Contains Narcotics/Psychotropics/Precursors — patient & prescription data required')}</p>
                         <input value={pasienForm.nomor_resep} onChange={e => setPasienForm({...pasienForm, nomor_resep: e.target.value})}
-                          placeholder="No. Resep *" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                          placeholder={t('No. Resep *', 'Prescription No. *')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         <input value={pasienForm.nama_pasien} onChange={e => setPasienForm({...pasienForm, nama_pasien: e.target.value})}
-                          placeholder="Nama Pasien *" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                          placeholder={t('Nama Pasien *', 'Patient Name *')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         <div className="grid grid-cols-2 gap-2">
                           <input value={pasienForm.kontak_pasien} onChange={e => setPasienForm({...pasienForm, kontak_pasien: e.target.value})}
-                            placeholder="Kontak (HP)" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                            placeholder={t('Kontak (HP)', 'Contact (Phone)')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                           <input value={pasienForm.alamat_pasien} onChange={e => setPasienForm({...pasienForm, alamat_pasien: e.target.value})}
-                            placeholder="Alamat" className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                            placeholder={t('Alamat', 'Address')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                       </div>
                     )}
                     <div className="mb-3">
-                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Metode Pembayaran</label>
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Metode Pembayaran', 'Payment Method')}</label>
                       <div className="grid grid-cols-3 gap-1.5 mb-3">
                         {['Tunai','QRIS','Transfer','Debit','Kartu Kredit'].map(m => (
                           <button key={m} onClick={() => setMetodeBayar(m)}
@@ -2791,27 +3142,27 @@ const batalRetur = async (row: any) => {
                           </button>
                         ))}
                       </div>
-                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">Bayar (Rp)</label>
+                      <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Bayar (Rp)', 'Pay (Rp)')}</label>
                       <input type="text" inputMode="numeric" value={bayar ? bayar.toLocaleString('id-ID') : ''}
                         onChange={e => setBayar(+e.target.value.replace(/\D/g, '') || 0)}
                         onDoubleClick={() => setBayar(keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0))}
                         className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" placeholder="0" />
-                      <p className="text-[11px] text-[#9ca3af] mt-1">Klik 2× untuk isi otomatis sesuai total.</p>
+                      <p className="text-[11px] text-[#9ca3af] mt-1">{t('Klik 2× untuk isi otomatis sesuai total.', 'Double-click to auto-fill the total.')}</p>
                     </div>
                     {bayar > 0 && (
                       <div className="flex justify-between text-sm font-semibold text-green-600 mb-4">
-                        <span>Kembalian</span>
+                        <span>{t('Kembalian', 'Change')}</span>
                         <span>Rp {Math.max(0, bayar - keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)).toLocaleString('id-ID')}</span>
                       </div>
                     )}
                     <button disabled={prosesLoading} onClick={async () => {
                       if (prosesLoading) return
-                      if (keranjang.length === 0) return alert('Keranjang kosong!')
+                      if (keranjang.length === 0) return alert(t('Keranjang kosong!', 'Cart is empty!'))
                       const total = keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)
-                      if (bayar < total) return alert('Pembayaran kurang!')
+                      if (bayar < total) return alert(t('Pembayaran kurang!', 'Insufficient payment!'))
                       const perluResep = keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori))
                       if (perluResep && (!pasienForm.nama_pasien.trim() || !pasienForm.nomor_resep.trim())) {
-                        return alert('Obat golongan Narkotika/Psikotropika/Prekursor wajib mengisi Nama Pasien dan No. Resep.')
+                        return alert(t('Obat golongan Narkotika/Psikotropika/Prekursor wajib mengisi Nama Pasien dan No. Resep.', 'Narcotics/Psychotropics/Precursors require Patient Name and Prescription No.'))
                       }
                       const kembalian = bayar - total
                       setProsesLoading(true)
@@ -2825,11 +3176,11 @@ const batalRetur = async (row: any) => {
                         }
                         const { data: trx, error: trxError } = await supabase.from('transactions').insert([trxPayload]).select().single()
                         if (trxError) { alert('Error: ' + trxError.message); setProsesLoading(false); return }
-                        const items = keranjang.map(k => ({ transaction_id: trx.id, product_id: k.id, nama_obat: k.nama_obat, harga_jual: k.harga_jual, jumlah: k.jumlah, subtotal: k.harga_jual * k.jumlah }))
+                        const items = keranjang.map(k => ({ transaction_id: trx.id, product_id: k.is_jasa ? null : k.id, nama_obat: k.nama_obat, harga_jual: k.harga_jual, jumlah: k.jumlah, subtotal: k.harga_jual * k.jumlah }))
                         const { error: itemError } = await supabase.from('transaction_items').insert(items)
                         if (itemError) { alert('Error items: ' + itemError.message); setProsesLoading(false); return }
                         for (const k of keranjang) {
-                          await supabase.from('products').update({ stok_total: k.stok_total - k.jumlah }).eq('id', k.id)
+                          if (!k.is_jasa) await supabase.from('products').update({ stok_total: k.stok_total - k.jumlah }).eq('id', k.id)
                         }
                         setLastTrx({ ...trx, total, bayar, kembalian })
                         setLastItems(keranjang.map(k => ({ ...k, subtotal: k.harga_jual * k.jumlah })))
@@ -2838,17 +3189,68 @@ const batalRetur = async (row: any) => {
                         setBayar(0)
                         setMetodeBayar('Tunai')
                         setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
-                      } catch(e) { alert('Terjadi kesalahan, coba lagi') }
+                      } catch(e) { alert(t('Terjadi kesalahan, coba lagi', 'An error occurred, please try again')) }
                       finally { setProsesLoading(false) }
                     }} className="w-full bg-[#1e3a2c] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#24462f] transition disabled:opacity-50">
-                      {prosesLoading ? 'Memproses...' : 'Proses Transaksi'}
+                      {prosesLoading ? t('Memproses...', 'Processing...') : t('Proses Transaksi', 'Process Transaction')}
                     </button>
                     <button onClick={() => { setKeranjang([]); setBayar(0); setMetodeBayar('Tunai'); setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' }) }}
                       className="w-full mt-2 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition">
-                      Batal / Reset
+                      {t('Batal / Reset', 'Cancel / Reset')}
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* LAYANAN JASA */}
+          {activePage === 'layanan' && (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Layanan Jasa', 'Services')}</h1>
+                  <p className="text-[#6b7280] text-sm">{t('Jasa apotek seperti racikan resep, cek gula darah, tensi, dll — bisa dijual di Kasir.', 'Pharmacy services like prescription compounding, blood-sugar checks, etc. — sellable at the cashier.')}</p>
+                </div>
+                <button onClick={() => { setServiceForm({ nama: '', harga: 0, deskripsi: '' }); setShowServiceForm(true) }}
+                  className="bg-[#1e3a2c] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
+                  + {t('Tambah Layanan', 'Add Service')}
+                </button>
+              </div>
+              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-[#f0ede6]">
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Nama Layanan', 'Service Name')}</th>
+                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Tarif', 'Fee')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Deskripsi', 'Description')}</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">{t('Aksi', 'Action')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {services.length === 0 ? (
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada layanan — tambah layanan pertama', 'No services yet — add your first service')}</td></tr>
+                    ) : services.map((s: any) => (
+                      <tr key={s.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                        <td className="px-4 py-3 font-medium text-[#1c2620]">{s.nama}</td>
+                        <td className="px-4 py-3 text-right text-[#1c2620]">Rp {(s.harga || 0).toLocaleString('id-ID')}</td>
+                        <td className="px-4 py-3 text-[#6b7280] text-xs max-w-[280px] truncate">{s.deskripsi || '-'}</td>
+                        <td className="px-4 py-3 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                            {s.status === 'aktif' ? t('Aktif', 'Active') : t('Nonaktif', 'Inactive')}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => setEditService({ ...s })} title="Edit" className="p-1.5 rounded-lg text-[#1e3a2c] hover:bg-[#f5f2eb] transition"><Pencil size={14} /></button>
+                            <button onClick={() => handleDeleteService(s)} title={t('Hapus','Delete')} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition"><Trash2 size={14} /></button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -2858,12 +3260,12 @@ const batalRetur = async (row: any) => {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Pembelian</h1>
-                  <p className="text-[#6b7280] text-sm">Purchase Order ke supplier</p>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">{t('Pembelian', 'Purchasing')}</h1>
+                  <p className="text-[#6b7280] text-sm">{t('Purchase Order ke supplier', 'Purchase Orders to suppliers')}</p>
                 </div>
                 <button onClick={() => setShowPOForm(true)}
                   className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                  + Buat PO
+                  + {t('Buat PO', 'Create PO')}
                 </button>
               </div>
 
@@ -2966,17 +3368,17 @@ const batalRetur = async (row: any) => {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">No. PO</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('No. PO', 'PO No.')}</th>
                       <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Supplier</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Tanggal</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Tanggal', 'Date')}</th>
                       <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Total</th>
                       <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Aksi</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">{t('Aksi', 'Action')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {poList.length === 0 ? (
-                      <tr><td colSpan={6} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada PO — buat PO pertama</td></tr>
+                      <tr><td colSpan={6} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada PO — buat PO pertama', 'No POs yet — create your first PO')}</td></tr>
                     ) : (
                       poList.map((po: any) => (
                         <tr key={po.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
@@ -2996,21 +3398,21 @@ const batalRetur = async (row: any) => {
 <button onClick={async () => {
   const { data: items } = await supabase.from('po_items').select('*').eq('po_id', po.id)
   setShowPODetail({ ...po, items: items || [] })
-}} className="text-xs text-[#6b7280] hover:underline font-medium">Detail</button>
+}} className="text-xs text-[#6b7280] hover:underline font-medium">{t('Detail', 'Details')}</button>
                               {po.status === 'draft' && (
                                 <>
                                   <span className="text-[#d1cdc4]">|</span>
                                   <button onClick={async () => {
                                     await supabase.from('purchase_orders').update({ status: 'dikirim' }).eq('id', po.id)
                                     fetchPOList()
-                                  }} className="text-xs text-blue-600 hover:underline font-medium">Kirim</button>
+                                  }} className="text-xs text-blue-600 hover:underline font-medium">{t('Kirim', 'Send')}</button>
                                 </>
                               )}
                               {po.status === 'dikirim' && (
                                 <>
                                   <span className="text-[#d1cdc4]">|</span>
                                   <button onClick={() => openPenerimaan(po)} className="text-xs text-green-600 hover:underline font-medium">
-                                    {po.status_penerimaan === 'partial' ? 'Terima Lagi' : 'Terima Barang'}
+                                    {po.status_penerimaan === 'partial' ? t('Terima Lagi', 'Receive More') : t('Terima Barang', 'Receive Goods')}
                                   </button>
                                 </>
                               )}
@@ -3030,27 +3432,27 @@ const batalRetur = async (row: any) => {
             <div>
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">Supplier</h1>
-                  <p className="text-[#6b7280] text-sm">Daftar PBF dan distributor apotek</p>
+                  <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">{t('Supplier', 'Suppliers')}</h1>
+                  <p className="text-[#6b7280] text-sm">{t('Daftar PBF dan distributor apotek', 'List of pharmacy distributors (PBF)')}</p>
                 </div>
                 <button onClick={() => setShowSupplierForm(true)}
                   className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                  + Tambah Supplier
+                  + {t('Tambah Supplier', 'Add Supplier')}
                 </button>
               </div>
 
               {showSupplierForm && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl">
-                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Tambah Supplier</h2>
+                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">{t('Tambah Supplier', 'Add Supplier')}</h2>
                     <div className="space-y-3">
                       <div>
-                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">Nama Supplier *</label>
+                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Nama Supplier *', 'Supplier Name *')}</label>
                         <input value={supplierForm.nama_supplier} onChange={e => setSupplierForm({...supplierForm, nama_supplier: e.target.value})}
                           className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">Jenis</label>
+                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Jenis', 'Type')}</label>
                         <select value={supplierForm.jenis} onChange={e => setSupplierForm({...supplierForm, jenis: e.target.value})}
                           className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
                           <option value="PBF">PBF</option>
@@ -3059,7 +3461,7 @@ const batalRetur = async (row: any) => {
                         </select>
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">Telepon</label>
+                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Telepon', 'Phone')}</label>
                         <input value={supplierForm.telepon} onChange={e => setSupplierForm({...supplierForm, telepon: e.target.value})}
                           className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
@@ -3069,16 +3471,16 @@ const batalRetur = async (row: any) => {
                           className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                       <div>
-                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">Alamat</label>
+                        <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Alamat', 'Address')}</label>
                         <textarea value={supplierForm.alamat} onChange={e => setSupplierForm({...supplierForm, alamat: e.target.value})}
                           rows={2} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                       </div>
                     </div>
                     <div className="flex gap-3 mt-5">
                       <button onClick={() => setShowSupplierForm(false)}
-                        className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
+                        className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">{t('Batal', 'Cancel')}</button>
                       <button onClick={handleTambahSupplier}
-                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">Simpan</button>
+                        className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">{t('Simpan', 'Save')}</button>
                     </div>
                   </div>
                 </div>
@@ -3088,16 +3490,16 @@ const batalRetur = async (row: any) => {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Kode</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Nama Supplier</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Jenis</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Telepon</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Kode', 'Code')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Nama Supplier', 'Supplier Name')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Jenis', 'Type')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Telepon', 'Phone')}</th>
                       <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {suppliers.length === 0 ? (
-                      <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada supplier — tambah supplier dulu</td></tr>
+                      <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada supplier — tambah supplier dulu', 'No suppliers yet — add a supplier first')}</td></tr>
                     ) : (
                       suppliers.map(s => (
                         <tr key={s.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
@@ -3120,14 +3522,14 @@ const batalRetur = async (row: any) => {
           {/* LAPORAN */}
           {activePage === 'laporan' && (
             <div>
-              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Laporan</h1>
-              <p className="text-[#6b7280] text-sm mb-5">Laporan penjualan &amp; laporan SIPNAP (Narkotika/Psikotropika/Prekursor)</p>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Laporan', 'Reports')}</h1>
+              <p className="text-[#6b7280] text-sm mb-5">{t('Laporan penjualan & laporan SIPNAP (Narkotika/Psikotropika/Prekursor)', 'Sales reports & SIPNAP reports (Narcotics/Psychotropics/Precursors)')}</p>
 
               <div className="flex gap-1 mb-5">
-                {([{id:'penjualan',label:'Penjualan'},{id:'sipnap',label:'SIPNAP'}] as const).map(t => (
-                  <button key={t.id} onClick={() => setLaporanTab(t.id)}
-                    className={`px-4 py-2 rounded-xl text-sm font-medium transition ${laporanTab === t.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'}`}>
-                    {t.label}
+                {([{id:'penjualan',label:t('Penjualan','Sales')},{id:'sipnap',label:'SIPNAP'}] as const).map(tab => (
+                  <button key={tab.id} onClick={() => setLaporanTab(tab.id)}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition ${laporanTab === tab.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'}`}>
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -3174,18 +3576,18 @@ const batalRetur = async (row: any) => {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">No. Transaksi</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Waktu</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('No. Transaksi', 'Transaction No.')}</th>
+                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Waktu', 'Time')}</th>
                       <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Total</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Bayar</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Kembalian</th>
+                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Bayar', 'Paid')}</th>
+                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Kembalian', 'Change')}</th>
                       <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Aksi</th>
+                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">{t('Aksi', 'Action')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {riwayat.length === 0 ? (
-                      <tr><td colSpan={7} className="px-4 py-8 text-center text-[#9ca3af]">Belum ada transaksi</td></tr>
+                      <tr><td colSpan={7} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada transaksi', 'No transactions yet')}</td></tr>
                     ) : (
                       riwayat.map(trx => (
                         <tr key={trx.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
@@ -3212,7 +3614,7 @@ const batalRetur = async (row: any) => {
                                 <>
                                   <span className="text-[#d1cdc4]">|</span>
                                   <button onClick={async () => {
-                                    if (!confirm(`Yakin batalkan transaksi ${trx.nomor_transaksi}? Stok akan dikembalikan.`)) return
+                                    if (!confirm(t(`Yakin batalkan transaksi ${trx.nomor_transaksi}? Stok akan dikembalikan.`, `Cancel transaction ${trx.nomor_transaksi}? Stock will be restored.`))) return
                                     const { data: items } = await supabase.from('transaction_items').select('*, products(stok_total)').eq('transaction_id', trx.id)
                                     if (items) {
                                       for (const item of items) {
@@ -3223,8 +3625,8 @@ const batalRetur = async (row: any) => {
                                     }
                                     await supabase.from('transactions').update({ status: 'dibatalkan' }).eq('id', trx.id)
                                     fetchRiwayat()
-                                    alert('✅ Transaksi dibatalkan, stok dikembalikan.')
-                                  }} className="text-xs text-red-500 hover:underline font-medium">Batalkan</button>
+                                    alert(t('✅ Transaksi dibatalkan, stok dikembalikan.', '✅ Transaction cancelled, stock restored.'))
+                                  }} className="text-xs text-red-500 hover:underline font-medium">{t('Batalkan', 'Cancel')}</button>
                                 </>
                               )}
                             </div>
@@ -3237,9 +3639,9 @@ const batalRetur = async (row: any) => {
               </div>
               {riwayat.length > 0 && (
                 <div className="mt-4 bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-4 flex justify-between items-center">
-                  <span className="text-sm text-[#6b7280]">Total {riwayat.length} transaksi</span>
+                  <span className="text-sm text-[#6b7280]">Total {riwayat.length} {t('transaksi', 'transactions')}</span>
                   <span className="text-sm font-semibold text-[#1e3a2c]">
-                    Total Omzet: Rp {riwayat.filter(t => t.status !== 'dibatalkan').reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
+                    {t('Total Omzet', 'Total Revenue')}: Rp {riwayat.filter(x => x.status !== 'dibatalkan').reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
                   </span>
                 </div>
               )}
@@ -3247,12 +3649,12 @@ const batalRetur = async (row: any) => {
             </div>
           )}
 
-          {/* MIGRASI DATA */}
-          {activePage === 'migrasi' && (() => {
+          {/* MIGRASI DATA — dipindah ke Settings → Migrasi Data (lihat migrasiPane) */}
+          {false && (() => {
             const cards = [
               {
-                key: 'produk', title: 'Daftar Produk', Icon: Pill,
-                desc: 'Impor katalog obat: nama, kategori, harga, dan stok awal.',
+                key: 'produk', title: t('Daftar Produk', 'Product List'), Icon: Pill,
+                desc: t('Impor katalog obat: nama, kategori, harga, dan stok awal.', 'Import the drug catalog: name, category, price, and opening stock.'),
                 cols: 'kode (opsional), nama_obat, nama_generik, kandungan, kategori, satuan, isi_kemasan, harga_beli, harga_jual, stok_total, stok_minimum',
                 hint: 'Kategori: bebas, bebas_terbatas, keras, suplemen, psikotropika, narkotika, prekursor, alkes, lainnya.',
                 file: 'template_produk.csv',
@@ -3261,8 +3663,8 @@ const batalRetur = async (row: any) => {
                 onUpload: importProduk,
               },
               {
-                key: 'supplier', title: 'Daftar Supplier', Icon: Truck,
-                desc: 'Impor daftar PBF / supplier obat.',
+                key: 'supplier', title: t('Daftar Supplier', 'Supplier List'), Icon: Truck,
+                desc: t('Impor daftar PBF / supplier obat.', 'Import the list of distributors / drug suppliers.'),
                 cols: 'nama_supplier, jenis, alamat, telepon, email',
                 hint: 'Jenis yang valid: PBF, Subdistributor, atau Lainnya (nilai lain otomatis disesuaikan).',
                 file: 'template_supplier.csv',
@@ -3271,8 +3673,8 @@ const batalRetur = async (row: any) => {
                 onUpload: importSupplier,
               },
               {
-                key: 'stok', title: 'Stok Awal (Batch)', Icon: PackageOpen,
-                desc: 'Impor stok awal per batch + expired date. Dicocokkan ke produk lewat kode.',
+                key: 'stok', title: t('Stok Awal (Batch)', 'Opening Stock (Batch)'), Icon: PackageOpen,
+                desc: t('Impor stok awal per batch + expired date. Dicocokkan ke produk lewat kode.', 'Import opening stock per batch + expiry date. Matched to products by code.'),
                 cols: 'kode_produk, batch_number, expired_date (YYYY-MM-DD), stok_batch',
                 hint: 'Impor Produk dulu agar kode-nya tersedia. Stok batch akan menambah stok total produk.',
                 file: 'template_stok_awal.csv',
@@ -3281,8 +3683,8 @@ const batalRetur = async (row: any) => {
                 onUpload: importStok,
               },
               {
-                key: 'mapping', title: 'Mapping Produk–Supplier', Icon: ClipboardList,
-                desc: 'Kaitkan tiap produk ke supplier-nya, agar pembuatan PO otomatis tahu daftar produk per supplier.',
+                key: 'mapping', title: t('Mapping Produk–Supplier', 'Product–Supplier Mapping'), Icon: ClipboardList,
+                desc: t('Kaitkan tiap produk ke supplier-nya, agar pembuatan PO otomatis tahu daftar produk per supplier.', 'Link each product to its supplier, so creating a PO automatically knows the products per supplier.'),
                 cols: 'kode_produk, nama_supplier (atau kode_supplier)',
                 hint: 'Import Produk & Supplier dulu. Nama supplier harus sama persis dengan yang terdaftar.',
                 file: 'template_mapping_produk_supplier.csv',
@@ -3291,8 +3693,8 @@ const batalRetur = async (row: any) => {
                 onUpload: importMapping,
               },
               {
-                key: 'fakturawal', title: 'Faktur / Hutang Awal', Icon: Receipt,
-                desc: 'Impor faktur pembelian yang belum lunas — langsung muncul di menu Pembayaran Faktur dengan jatuh tempo.',
+                key: 'fakturawal', title: t('Faktur / Hutang Awal', 'Opening Invoices / Debts'), Icon: Receipt,
+                desc: t('Impor faktur pembelian yang belum lunas — langsung muncul di menu Pembayaran Faktur dengan jatuh tempo.', 'Import unpaid purchase invoices — they appear in Invoice Payments with due dates.'),
                 cols: 'nomor_faktur, nama_supplier, tanggal_faktur (YYYY-MM-DD), term_of_payment, total',
                 hint: 'Import Supplier dulu. Jatuh tempo dihitung dari tanggal_faktur + term_of_payment bila kolom tanggal_jatuh_tempo tidak diisi.',
                 file: 'template_faktur_awal.csv',
@@ -3303,18 +3705,18 @@ const batalRetur = async (row: any) => {
             ]
             return (
             <div>
-              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Migrasi Data</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Onboarding cepat: unduh template, isi di Excel/Sheets, lalu upload CSV. Data otomatis masuk ke apotek Anda.</p>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Migrasi Data', 'Data Migration')}</h1>
+              <p className="text-[#6b7280] text-sm mb-6">{t('Onboarding cepat: unduh template, isi di Excel/Sheets, lalu upload CSV. Data otomatis masuk ke apotek Anda.', 'Fast onboarding: download a template, fill it in Excel/Sheets, then upload the CSV. Data goes straight into your pharmacy.')}</p>
 
               {isSuper && (
                 <div className="mb-5 p-4 rounded-xl border border-amber-300 bg-amber-50 flex flex-col sm:flex-row sm:items-center gap-3">
                   <div className="flex-1">
-                    <p className="text-sm font-semibold text-amber-800">Mode Super Admin</p>
-                    <p className="text-xs text-amber-700">Pilih apotek tujuan — data import/export akan masuk/diambil dari apotek ini.</p>
+                    <p className="text-sm font-semibold text-amber-800">{t('Mode Super Admin', 'Super Admin Mode')}</p>
+                    <p className="text-xs text-amber-700">{t('Pilih apotek tujuan — data import/export akan masuk/diambil dari apotek ini.', 'Select a target pharmacy — imported/exported data goes to/from this pharmacy.')}</p>
                   </div>
                   <select value={migrasiCompany} onChange={e => setMigrasiCompany(e.target.value)}
                     className="border border-amber-300 rounded-lg px-3 py-2 text-sm bg-white min-w-[220px] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
-                    <option value="">— Pilih Apotek —</option>
+                    <option value="">{t('— Pilih Apotek —', '— Select Pharmacy —')}</option>
                     {companies.map((c: any) => <option key={c.id} value={c.id}>{c.nama}</option>)}
                   </select>
                 </div>
@@ -3326,20 +3728,20 @@ const batalRetur = async (row: any) => {
                     <h2 className="font-bold text-[#1c2620]">{c.title}</h2>
                     <p className="text-sm text-[#6b7280] mt-1 mb-3">{c.desc}</p>
                     <div className="bg-[#f5f2eb] rounded-lg p-3 mb-3">
-                      <p className="text-[11px] font-medium text-[#6b7280] mb-1">Kolom CSV:</p>
+                      <p className="text-[11px] font-medium text-[#6b7280] mb-1">{t('Kolom CSV:', 'CSV Columns:')}</p>
                       <p className="text-[11px] text-[#1c2620] font-mono leading-relaxed break-words">{c.cols}</p>
                     </div>
                     <p className="text-[11px] text-[#9ca3af] mb-4">{c.hint}</p>
                     <div className="mt-auto flex flex-col gap-2">
                       <button onClick={() => downloadTemplate(c.file, c.headers, c.examples)}
                         className="inline-flex items-center justify-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition">
-                        <Download size={15} /> Download Template
+                        <Download size={15} /> {t('Download Template', 'Download Template')}
                       </button>
                       <label className={`inline-flex items-center justify-center gap-2 bg-[#1e3a2c] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition cursor-pointer ${importing === c.key ? 'opacity-60 pointer-events-none' : ''}`}>
-                        <Upload size={15} /> {importing === c.key ? 'Mengimpor…' : 'Upload CSV'}
+                        <Upload size={15} /> {importing === c.key ? t('Mengimpor…', 'Importing…') : t('Upload CSV', 'Upload CSV')}
                         <input type="file" accept=".csv,text/csv" className="hidden"
                           onChange={e => {
-                            if (isSuper && !migrasiCompany) { alert('Pilih apotek tujuan dulu di atas.'); e.target.value = ''; return }
+                            if (isSuper && !migrasiCompany) { alert(t('Pilih apotek tujuan dulu di atas.', 'Select a target pharmacy above first.')); e.target.value = ''; return }
                             if (e.target.files?.[0]) { c.onUpload(e.target.files[0]); e.target.value = '' }
                           }} />
                       </label>
@@ -3351,18 +3753,18 @@ const batalRetur = async (row: any) => {
                 ))}
               </div>
               <div className="mt-6 bg-white/60 border border-white/60 rounded-xl p-4 text-sm text-[#6b7280] max-w-3xl">
-                <p className="font-medium text-[#1c2620] mb-1">Urutan yang disarankan</p>
-                <p>1) Import <b>Produk</b> → 2) <b>Supplier</b> → 3) <b>Stok Awal</b> → 4) <b>Mapping Produk–Supplier</b>. Simpan file sebagai <b>CSV UTF-8</b>. Header wajib sama persis dengan template.</p>
+                <p className="font-medium text-[#1c2620] mb-1">{t('Urutan yang disarankan', 'Recommended order')}</p>
+                <p>{t('1) Import Produk → 2) Supplier → 3) Stok Awal → 4) Mapping Produk–Supplier. Simpan file sebagai CSV UTF-8. Header wajib sama persis dengan template.', '1) Import Products → 2) Suppliers → 3) Opening Stock → 4) Product–Supplier Mapping. Save the file as CSV UTF-8. Headers must match the template exactly.')}</p>
               </div>
 
               {/* Export / Backup */}
               <div className="mt-6">
-                <h2 className="text-lg font-bold text-[#1c2620] mb-1">Export / Backup Data</h2>
-                <p className="text-sm text-[#6b7280] mb-4">Unduh data apotek saat ini ke CSV (untuk cadangan atau pindah sistem).</p>
+                <h2 className="text-lg font-bold text-[#1c2620] mb-1">{t('Export / Backup Data', 'Export / Backup Data')}</h2>
+                <p className="text-sm text-[#6b7280] mb-4">{t('Unduh data apotek saat ini ke CSV (untuk cadangan atau pindah sistem).', 'Download current pharmacy data to CSV (for backup or system migration).')}</p>
                 <div className="flex flex-wrap gap-3">
                   {([['Produk',exportProduk],['Supplier',exportSupplier],['Stok / Batch',exportStok],['Transaksi',exportTransaksi],['Faktur',exportFaktur]] as const).map(([label, fn]) => (
-                    <button key={label} onClick={() => { if (isSuper && !migrasiCompany) return alert('Pilih apotek tujuan dulu di atas.'); (fn as () => void)() }}
-                      className="inline-flex items-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition"><Download size={15} /> Export {label}</button>
+                    <button key={label} onClick={() => { if (isSuper && !migrasiCompany) return alert(t('Pilih apotek tujuan dulu di atas.', 'Select a target pharmacy above first.')); (fn as () => void)() }}
+                      className="inline-flex items-center gap-2 border border-[#d1cdc4] text-[#1e3a2c] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition"><Download size={15} /> {t('Export', 'Export')} {label}</button>
                   ))}
                 </div>
               </div>
@@ -3373,21 +3775,22 @@ const batalRetur = async (row: any) => {
           {/* PENGATURAN */}
           {activePage === 'pengaturan' && (() => {
             const inputCls = 'w-full border border-[#d1cdc4] rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]'
-            const roleLabels: Record<string,string> = { pemilik:'Pemilik', apoteker:'Apoteker', asisten_apoteker:'Asisten Apoteker', kasir:'Kasir', admin:'Admin' }
+            const roleLabels: Record<string,string> = { pemilik:t('Pemilik','Owner'), apoteker:t('Apoteker','Pharmacist'), asisten_apoteker:t('Asisten Apoteker','Pharmacist Assistant'), kasir:t('Kasir','Cashier'), admin:'Admin' }
             const settingsMenu = [
-              { id:'profil', label:'Profil Apotek', desc:'Nama, alamat, logo', Icon:Building2 },
-              { id:'pengguna', label:'Manajemen Pengguna', desc:'Akses pengguna, anggota tim', Icon:Users },
-              { id:'apoteker', label:'Data Apoteker', desc:'SIA, SIPA, penanggung jawab', Icon:ShieldCheck },
+              { id:'profil', label:t('Profil Apotek','Pharmacy Profile'), desc:t('Nama, alamat, logo','Name, address, logo'), Icon:Building2 },
+              { id:'pengguna', label:t('Manajemen Pengguna','User Management'), desc:t('Akses pengguna, anggota tim','User access, team members'), Icon:Users },
+              { id:'apoteker', label:t('Data Apoteker','Pharmacist Data'), desc:t('SIA, SIPA, penanggung jawab','SIA, SIPA, responsible person'), Icon:ShieldCheck },
+              { id:'migrasi', label:t('Migrasi Data','Data Migration'), desc:t('Import & export CSV','Import & export CSV'), Icon:Database },
             ]
             return (
             <div>
-              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">Pengaturan</h1>
-              <p className="text-[#6b7280] text-sm mb-6">Kelola profil apotek, pengguna, dan data penanggung jawab</p>
+              <h1 className="text-3xl font-bold text-[#1c2620] mb-1">{t('Pengaturan', 'Settings')}</h1>
+              <p className="text-[#6b7280] text-sm mb-6">{t('Kelola profil apotek, pengguna, dan data penanggung jawab', 'Manage pharmacy profile, users, and responsible pharmacist data')}</p>
               <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-6">
                 {/* Sub-menu kiri */}
                 <div className="space-y-2">
-                  {settingsMenu.map(m => (
-                    <button key={m.id} onClick={() => setSettingsTab(m.id)}
+                  {settingsMenu.map((m: any) => (
+                    <button key={m.id} onClick={() => m.nav ? setActivePage(m.id) : setSettingsTab(m.id)}
                       className={`w-full flex items-center gap-3 p-3.5 rounded-xl border text-left transition ${
                         settingsTab === m.id ? 'bg-white/80 border-[#1e3a2c]/20 shadow-sm' : 'bg-white/50 border-white/60 hover:bg-white/70'
                       }`}>
@@ -3403,17 +3806,18 @@ const batalRetur = async (row: any) => {
                   ))}
                   <div className="w-full flex items-center gap-3 p-3.5 rounded-xl border border-white/60 bg-white/30 opacity-70">
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center bg-[#eef0ea] text-[#9ca3af] shrink-0"><CreditCard size={17} /></div>
-                    <div className="flex-1"><p className="text-sm font-semibold text-[#6b7280]">Metode Pembayaran</p><p className="text-xs text-[#9ca3af]">Segera hadir</p></div>
+                    <div className="flex-1"><p className="text-sm font-semibold text-[#6b7280]">{t('Metode Pembayaran', 'Payment Methods')}</p><p className="text-xs text-[#9ca3af]">{t('Segera hadir', 'Coming soon')}</p></div>
                   </div>
                 </div>
 
                 {/* Konten kanan */}
                 <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-6">
+                  {settingsTab === 'migrasi' && migrasiPane}
                   {/* PROFIL APOTEK */}
                   {settingsTab === 'profil' && (
                     <div>
-                      <h2 className="text-xl font-bold text-[#1c2620] mb-1">Profil apotek</h2>
-                      <p className="text-sm text-[#6b7280] mb-6">Profil apotek akan ditampilkan pada struk penjualan.</p>
+                      <h2 className="text-xl font-bold text-[#1c2620] mb-1">{t('Profil apotek', 'Pharmacy profile')}</h2>
+                      <p className="text-sm text-[#6b7280] mb-6">{t('Profil apotek akan ditampilkan pada struk penjualan.', 'The pharmacy profile appears on sales receipts.')}</p>
                       <div className="flex flex-col sm:flex-row gap-6">
                         {/* Logo */}
                         <div className="shrink-0">
@@ -3423,35 +3827,35 @@ const batalRetur = async (row: any) => {
                               : <Building2 size={44} className="text-[#c4c9c2]" strokeWidth={1.3} />}
                           </div>
                           <label className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#d1cdc4] text-sm text-[#1e3a2c] font-medium hover:bg-[#f5f2eb] transition cursor-pointer">
-                            <Upload size={15} /> Ubah logo
+                            <Upload size={15} /> {t('Ubah logo', 'Change logo')}
                             <input type="file" accept=".jpg,.jpeg,.png" className="hidden"
                               onChange={e => e.target.files?.[0] && handleLogoUpload(e.target.files[0])} />
                           </label>
-                          <p className="text-xs text-[#9ca3af] mt-2 text-center">Maksimal 4MB<br/>Format .JPG .JPEG .PNG</p>
+                          <p className="text-xs text-[#9ca3af] mt-2 text-center">{t('Maksimal 4MB', 'Max 4MB')}<br/>{t('Format .JPG .JPEG .PNG', 'Format .JPG .JPEG .PNG')}</p>
                         </div>
                         {/* Fields */}
                         <div className="flex-1 space-y-4">
                           <div>
-                            <label className="text-sm font-medium text-[#374151] mb-1 block">Nama apotek</label>
+                            <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Nama apotek', 'Pharmacy name')}</label>
                             <input value={settingsData.nama_apotek || ''} onChange={e => setSettingsData({...settingsData, nama_apotek: e.target.value})} className={inputCls} />
                           </div>
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="text-sm font-medium text-[#374151] mb-1 block">Sektor usaha</label>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Sektor usaha', 'Business sector')}</label>
                               <input value={settingsData.sektor_usaha || 'Apotek'} onChange={e => setSettingsData({...settingsData, sektor_usaha: e.target.value})} className={inputCls} />
                             </div>
                             <div>
-                              <label className="text-sm font-medium text-[#374151] mb-1 block">Kota/Kabupaten</label>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Kota/Kabupaten', 'City/Regency')}</label>
                               <input value={settingsData.kota || ''} onChange={e => setSettingsData({...settingsData, kota: e.target.value})} placeholder="Kab. Gianyar, Bali" className={inputCls} />
                             </div>
                           </div>
                           <div>
-                            <label className="text-sm font-medium text-[#374151] mb-1 block">Alamat</label>
+                            <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Alamat', 'Address')}</label>
                             <textarea value={settingsData.alamat || ''} onChange={e => setSettingsData({...settingsData, alamat: e.target.value})} rows={2} className={inputCls} />
                           </div>
                           <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <label className="text-sm font-medium text-[#374151] mb-1 block">No. telepon</label>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">{t('No. telepon', 'Phone No.')}</label>
                               <input value={settingsData.nomor_telepon || ''} onChange={e => setSettingsData({...settingsData, nomor_telepon: e.target.value})} className={inputCls} />
                             </div>
                             <div>
@@ -3460,11 +3864,11 @@ const batalRetur = async (row: any) => {
                             </div>
                           </div>
                           <div>
-                            <label className="text-sm font-medium text-[#374151] mb-1 block">Nomor Ijin (SIA)</label>
+                            <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Nomor Ijin (SIA)', 'License No. (SIA)')}</label>
                             <input value={settingsData.nomor_ijin || ''} onChange={e => setSettingsData({...settingsData, nomor_ijin: e.target.value})} className={inputCls} />
                           </div>
                           <button onClick={saveSettings} className="bg-[#1e3a2c] text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                            Simpan Profil
+                            {t('Simpan Profil', 'Save Profile')}
                           </button>
                         </div>
                       </div>
@@ -3474,19 +3878,19 @@ const batalRetur = async (row: any) => {
                   {/* DATA APOTEKER */}
                   {settingsTab === 'apoteker' && (
                     <div className="max-w-md">
-                      <h2 className="text-xl font-bold text-[#1c2620] mb-1">Data apoteker</h2>
-                      <p className="text-sm text-[#6b7280] mb-6">Penanggung jawab yang tertera di PO & Berita Acara.</p>
+                      <h2 className="text-xl font-bold text-[#1c2620] mb-1">{t('Data apoteker', 'Pharmacist data')}</h2>
+                      <p className="text-sm text-[#6b7280] mb-6">{t('Penanggung jawab yang tertera di PO & Berita Acara.', 'The responsible person shown on POs & official reports.')}</p>
                       <div className="space-y-4">
                         <div>
-                          <label className="text-sm font-medium text-[#374151] mb-1 block">Nama Apoteker</label>
+                          <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Nama Apoteker', 'Pharmacist Name')}</label>
                           <input value={settingsData.nama_apoteker || ''} onChange={e => setSettingsData({...settingsData, nama_apoteker: e.target.value})} placeholder="apt. Nama Apoteker, S.Farm" className={inputCls} />
                         </div>
                         <div>
-                          <label className="text-sm font-medium text-[#374151] mb-1 block">Nomor SIPA</label>
+                          <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Nomor SIPA', 'SIPA Number')}</label>
                           <input value={settingsData.nomor_sipa || ''} onChange={e => setSettingsData({...settingsData, nomor_sipa: e.target.value})} placeholder="SIPA/001/2024/..." className={inputCls} />
                         </div>
                         <button onClick={saveSettings} className="bg-[#1e3a2c] text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                          Simpan Data Apoteker
+                          {t('Simpan Data Apoteker', 'Save Pharmacist Data')}
                         </button>
                       </div>
                     </div>
@@ -3497,13 +3901,13 @@ const batalRetur = async (row: any) => {
                     const ModuleGrid = ({ selected, onToggle, onClear, onAll }: { selected: string[], onToggle: (id:string)=>void, onClear: ()=>void, onAll: ()=>void }) => (
                       <div className="border border-[#e2ddd3] rounded-2xl p-5">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="font-semibold text-[#1c2620]">Akses Modul</p>
+                          <p className="font-semibold text-[#1c2620]">{t('Akses Modul', 'Module Access')}</p>
                           <div className="flex gap-3 text-xs">
-                            <button type="button" onClick={onAll} className="text-[#1e3a2c] font-medium hover:underline">Pilih semua</button>
-                            <button type="button" onClick={onClear} className="text-[#6b7280] hover:underline">Hapus semua</button>
+                            <button type="button" onClick={onAll} className="text-[#1e3a2c] font-medium hover:underline">{t('Pilih semua', 'Select all')}</button>
+                            <button type="button" onClick={onClear} className="text-[#6b7280] hover:underline">{t('Hapus semua', 'Clear all')}</button>
                           </div>
                         </div>
-                        <p className="text-xs text-[#9ca3af] mb-4">Centang modul yang boleh dibuka user ini.</p>
+                        <p className="text-xs text-[#9ca3af] mb-4">{t('Centang modul yang boleh dibuka user ini.', 'Check the modules this user may open.')}</p>
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                           {menuItems.map(m => {
                             const checked = selected.includes(m.id)
@@ -3511,7 +3915,7 @@ const batalRetur = async (row: any) => {
                               <button type="button" key={m.id} onClick={() => onToggle(m.id)}
                                 className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border text-left text-sm transition ${checked ? 'border-[#1e3a2c] bg-[#f5f2eb]' : 'border-[#d1cdc4] hover:bg-gray-50'}`}>
                                 <span className={`w-4 h-4 rounded flex items-center justify-center shrink-0 ${checked ? 'bg-[#1e3a2c] text-white' : 'border border-[#d1cdc4]'}`}>{checked && <Check size={11} strokeWidth={3} />}</span>
-                                <span className="text-[#1c2620]">{m.label}</span>
+                                <span className="text-[#1c2620]">{lang === 'en' ? m.en : m.label}</span>
                               </button>
                             )
                           })}
@@ -3522,9 +3926,9 @@ const batalRetur = async (row: any) => {
                     // ── FORM TAMBAH ──
                     if (showUserForm) return (
                       <div>
-                        <button onClick={() => setShowUserForm(false)} className="inline-flex items-center gap-1.5 text-sm text-[#6b7280] hover:text-[#1e3a2c] mb-3"><ArrowLeft size={15} /> Kembali ke Pengguna</button>
-                        <h2 className="text-xl font-bold text-[#1c2620] mb-1">Tambah Pengguna</h2>
-                        <p className="text-sm text-[#6b7280] mb-5">User baru langsung bisa login dengan email &amp; password ini.</p>
+                        <button onClick={() => setShowUserForm(false)} className="inline-flex items-center gap-1.5 text-sm text-[#6b7280] hover:text-[#1e3a2c] mb-3"><ArrowLeft size={15} /> {t('Kembali ke Pengguna', 'Back to Users')}</button>
+                        <h2 className="text-xl font-bold text-[#1c2620] mb-1">{t('Tambah Pengguna', 'Add User')}</h2>
+                        <p className="text-sm text-[#6b7280] mb-5">{t('User baru langsung bisa login dengan email & password ini.', 'The new user can sign in immediately with this email & password.')}</p>
                         <div className="space-y-5">
                           <div className="border border-[#e2ddd3] rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
@@ -3532,20 +3936,20 @@ const batalRetur = async (row: any) => {
                               <input type="email" value={userForm.email} onChange={e => setUserForm({...userForm, email: e.target.value})} placeholder="nama@apotek.com" className={inputCls} />
                             </div>
                             <div>
-                              <label className="text-sm font-medium text-[#374151] mb-1 block">Password Awal</label>
-                              <input type="text" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} placeholder="Minimal 6 karakter" className={inputCls} />
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Password Awal', 'Initial Password')}</label>
+                              <input type="text" value={userForm.password} onChange={e => setUserForm({...userForm, password: e.target.value})} placeholder={t('Minimal 6 karakter', 'At least 6 characters')} className={inputCls} />
                             </div>
                             <div>
-                              <label className="text-sm font-medium text-[#374151] mb-1 block">Nama</label>
-                              <input value={userForm.nama} onChange={e => setUserForm({...userForm, nama: e.target.value})} placeholder="Nama lengkap" className={inputCls} />
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Nama', 'Name')}</label>
+                              <input value={userForm.nama} onChange={e => setUserForm({...userForm, nama: e.target.value})} placeholder={t('Nama lengkap', 'Full name')} className={inputCls} />
                             </div>
                             <div>
                               <label className="text-sm font-medium text-[#374151] mb-1 block">Role</label>
                               <select value={userForm.role} onChange={e => setUserForm({...userForm, role: e.target.value, modules: ROLE_PAGES[e.target.value] || []})} className={inputCls}>
-                                <option value="pemilik">Pemilik</option>
-                                <option value="apoteker">Apoteker</option>
-                                <option value="asisten_apoteker">Asisten Apoteker</option>
-                                <option value="kasir">Kasir</option>
+                                <option value="pemilik">{t('Pemilik', 'Owner')}</option>
+                                <option value="apoteker">{t('Apoteker', 'Pharmacist')}</option>
+                                <option value="asisten_apoteker">{t('Asisten Apoteker', 'Pharmacist Assistant')}</option>
+                                <option value="kasir">{t('Kasir', 'Cashier')}</option>
                                 <option value="admin">Admin</option>
                               </select>
                             </div>
@@ -3556,7 +3960,7 @@ const batalRetur = async (row: any) => {
                             onAll={() => setUserForm({...userForm, modules: menuItems.map(m => m.id)})} />
                           <button onClick={handleTambahUser} disabled={savingUser}
                             className="w-full bg-[#1e3a2c] text-white py-3 rounded-xl text-sm font-semibold hover:bg-[#24462f] transition disabled:opacity-50">
-                            {savingUser ? 'Membuat…' : 'Buat Pengguna'}
+                            {savingUser ? t('Membuat…', 'Creating…') : t('Buat Pengguna', 'Create User')}
                           </button>
                         </div>
                       </div>
@@ -3565,13 +3969,13 @@ const batalRetur = async (row: any) => {
                     // ── FORM EDIT ──
                     if (editUser) return (
                       <div>
-                        <button onClick={() => setEditUser(null)} className="inline-flex items-center gap-1.5 text-sm text-[#6b7280] hover:text-[#1e3a2c] mb-3"><ArrowLeft size={15} /> Kembali ke Pengguna</button>
-                        <h2 className="text-xl font-bold text-[#1c2620] mb-1">Edit Pengguna</h2>
-                        <p className="text-sm text-[#6b7280] mb-5">Ubah role, status, dan hak akses modul. Email login tidak dapat diubah di sini.</p>
+                        <button onClick={() => setEditUser(null)} className="inline-flex items-center gap-1.5 text-sm text-[#6b7280] hover:text-[#1e3a2c] mb-3"><ArrowLeft size={15} /> {t('Kembali ke Pengguna', 'Back to Users')}</button>
+                        <h2 className="text-xl font-bold text-[#1c2620] mb-1">{t('Edit Pengguna', 'Edit User')}</h2>
+                        <p className="text-sm text-[#6b7280] mb-5">{t('Ubah role, status, dan hak akses modul. Email login tidak dapat diubah di sini.', 'Change role, status, and module access. Login email cannot be changed here.')}</p>
                         <div className="space-y-5">
                           <div className="border border-[#e2ddd3] rounded-2xl p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                              <label className="text-sm font-medium text-[#374151] mb-1 block">Nama</label>
+                              <label className="text-sm font-medium text-[#374151] mb-1 block">{t('Nama', 'Name')}</label>
                               <input value={editUser.nama} onChange={e => setEditUser({...editUser, nama: e.target.value})} className={inputCls} />
                             </div>
                             <div>
@@ -3581,18 +3985,18 @@ const batalRetur = async (row: any) => {
                             <div>
                               <label className="text-sm font-medium text-[#374151] mb-1 block">Role</label>
                               <select value={editUser.role} onChange={e => setEditUser({...editUser, role: e.target.value})} className={inputCls}>
-                                <option value="pemilik">Pemilik</option>
-                                <option value="apoteker">Apoteker</option>
-                                <option value="asisten_apoteker">Asisten Apoteker</option>
-                                <option value="kasir">Kasir</option>
+                                <option value="pemilik">{t('Pemilik', 'Owner')}</option>
+                                <option value="apoteker">{t('Apoteker', 'Pharmacist')}</option>
+                                <option value="asisten_apoteker">{t('Asisten Apoteker', 'Pharmacist Assistant')}</option>
+                                <option value="kasir">{t('Kasir', 'Cashier')}</option>
                                 <option value="admin">Admin</option>
                               </select>
                             </div>
                             <div>
                               <label className="text-sm font-medium text-[#374151] mb-1 block">Status</label>
                               <select value={editUser.status} onChange={e => setEditUser({...editUser, status: e.target.value})} className={inputCls}>
-                                <option value="aktif">Aktif</option>
-                                <option value="nonaktif">Nonaktif</option>
+                                <option value="aktif">{t('Aktif', 'Active')}</option>
+                                <option value="nonaktif">{t('Nonaktif', 'Inactive')}</option>
                               </select>
                             </div>
                           </div>
@@ -3601,7 +4005,7 @@ const batalRetur = async (row: any) => {
                             onClear={() => setEditUser({...editUser, modules: []})}
                             onAll={() => setEditUser({...editUser, modules: menuItems.map(m => m.id)})} />
                           <button onClick={handleUpdateUser} className="w-full bg-[#1e3a2c] text-white py-3 rounded-xl text-sm font-semibold hover:bg-[#24462f] transition">
-                            Simpan Perubahan
+                            {t('Simpan Perubahan', 'Save Changes')}
                           </button>
                         </div>
                       </div>
@@ -3611,29 +4015,29 @@ const batalRetur = async (row: any) => {
                     return (
                     <div>
                       <div className="flex items-center justify-between mb-1">
-                        <h2 className="text-xl font-bold text-[#1c2620]">Manajemen pengguna</h2>
+                        <h2 className="text-xl font-bold text-[#1c2620]">{t('Manajemen pengguna', 'User management')}</h2>
                         <button onClick={openTambahUser}
                           className="inline-flex items-center gap-2 bg-[#1e3a2c] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                          <UserPlus size={15} /> Tambah Pengguna
+                          <UserPlus size={15} /> {t('Tambah Pengguna', 'Add User')}
                         </button>
                       </div>
-                      <p className="text-sm text-[#6b7280] mb-5">Atur anggota tim apotek beserta hak akses modul masing-masing.</p>
+                      <p className="text-sm text-[#6b7280] mb-5">{t('Atur anggota tim apotek beserta hak akses modul masing-masing.', 'Manage pharmacy team members and their module access.')}</p>
                       {users.length === 0 ? (
                         <div className="text-center py-12 text-sm text-[#9ca3af]">
                           <Users size={32} className="mx-auto mb-2 text-[#c4c9c2]" />
-                          Belum ada pengguna. Klik "Tambah Pengguna" untuk menambah anggota tim.
+                          {t('Belum ada pengguna. Klik "Tambah Pengguna" untuk menambah anggota tim.', 'No users yet. Click "Add User" to add a team member.')}
                         </div>
                       ) : (
                         <div className="border border-[#f0ede6] rounded-xl overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead>
                               <tr className="bg-[#f5f2eb] text-[#6b7280]">
-                                <th className="text-left px-4 py-2.5 text-xs font-medium">Nama</th>
+                                <th className="text-left px-4 py-2.5 text-xs font-medium">{t('Nama', 'Name')}</th>
                                 <th className="text-left px-4 py-2.5 text-xs font-medium">Email</th>
                                 <th className="text-left px-4 py-2.5 text-xs font-medium">Role</th>
-                                <th className="text-center px-4 py-2.5 text-xs font-medium">Modul</th>
+                                <th className="text-center px-4 py-2.5 text-xs font-medium">{t('Modul', 'Modules')}</th>
                                 <th className="text-center px-4 py-2.5 text-xs font-medium">Status</th>
-                                <th className="text-center px-4 py-2.5 text-xs font-medium">Aksi</th>
+                                <th className="text-center px-4 py-2.5 text-xs font-medium">{t('Aksi', 'Action')}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -3644,11 +4048,11 @@ const batalRetur = async (row: any) => {
                                   <td className="px-4 py-3">
                                     <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[#dce5db] text-[#2f5741]">{roleLabels[u.role] || u.role}</span>
                                   </td>
-                                  <td className="px-4 py-3 text-center text-xs text-[#6b7280]">{Array.isArray(u.modules) && u.modules.length ? `${u.modules.length} modul` : 'default role'}</td>
+                                  <td className="px-4 py-3 text-center text-xs text-[#6b7280]">{Array.isArray(u.modules) && u.modules.length ? `${u.modules.length} ${t('modul','modules')}` : t('default role','default role')}</td>
                                   <td className="px-4 py-3 text-center">
                                     <button onClick={() => toggleUserStatus(u)}
                                       className={`px-2 py-0.5 rounded-full text-xs font-medium ${u.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                                      {u.status === 'aktif' ? 'Aktif' : 'Nonaktif'}
+                                      {u.status === 'aktif' ? t('Aktif', 'Active') : t('Nonaktif', 'Inactive')}
                                     </button>
                                   </td>
                                   <td className="px-4 py-3">
