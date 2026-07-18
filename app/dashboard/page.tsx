@@ -75,7 +75,18 @@ export default function Dashboard() {
   const [bayar, setBayar] = useState(0)
   const [metodeBayar, setMetodeBayar] = useState('Tunai')
   const [pasienForm, setPasienForm] = useState({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
-  const [laporanTab, setLaporanTab] = useState<'penjualan'|'sipnap'>('penjualan')
+  const [laporanTab, setLaporanTab] = useState<'penjualan'|'metode'|'sipnap'>('penjualan')
+  // Filter kolom produk
+  const [filterKategori, setFilterKategori] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [filterStok, setFilterStok] = useState('')
+  // Filter laporan penjualan / metode bayar
+  const [lapDari, setLapDari] = useState('')
+  const [lapSampai, setLapSampai] = useState('')
+  const [lapMetode, setLapMetode] = useState('')
+  const [lapStatus, setLapStatus] = useState('')
+  // Kasir: tandai transaksi resep
+  const [isResep, setIsResep] = useState(false)
   const [sipnapForm, setSipnapForm] = useState({ golongan: 'narkotika', bulan: new Date().getMonth() + 1, tahun: new Date().getFullYear() })
   const [importInfo, setImportInfo] = useState<Record<string, string>>({})
   const [importing, setImporting] = useState<string | null>(null)
@@ -94,6 +105,7 @@ export default function Dashboard() {
   const [bestSellers, setBestSellers] = useState<any[]>([])
   const [lowStock, setLowStock] = useState<any[]>([])
   const [expiringSoon, setExpiringSoon] = useState<any[]>([])
+  const [dueInvoices, setDueInvoices] = useState<any[]>([])
   const [settingsData, setSettingsData] = useState<any>({
     nama_apotek: '', alamat: '', nomor_ijin: '', nomor_telepon: ''
   })
@@ -991,6 +1003,15 @@ export default function Dashboard() {
       .select('batch_number,expired_date,stok_batch,products(nama_obat)')
       .lte('expired_date', in60.toISOString().split('T')[0]).gt('stok_batch', 0).order('expired_date'))
     setExpiringSoon((batches || []).slice(0, 6))
+
+    // Tagihan faktur akan jatuh tempo (belum lunas), urut jatuh tempo terdekat
+    const { data: fakturs } = await scopeQ(supabase.from('faktur')
+      .select('nomor_faktur,tanggal_jatuh_tempo,total,status,suppliers(nama_supplier)')
+      .neq('status', 'lunas'))
+    setDueInvoices((fakturs || [])
+      .filter((f: any) => f.tanggal_jatuh_tempo)
+      .sort((a: any, b: any) => new Date(a.tanggal_jatuh_tempo).getTime() - new Date(b.tanggal_jatuh_tempo).getTime())
+      .slice(0, 6))
   }
 
   const fetchProducts = async () => {
@@ -1321,6 +1342,29 @@ const batalRetur = async (row: any) => {
     p.nama_generik?.toLowerCase().includes(search.toLowerCase()) ||
     p.kandungan?.toLowerCase().includes(search.toLowerCase())
   )
+
+  // Filter tambahan khusus tabel produk (kategori/status/stok)
+  const produkFiltered = filteredProducts.filter(p => {
+    if (filterKategori && p.kategori !== filterKategori) return false
+    if (filterStatus && (p.status || 'aktif') !== filterStatus) return false
+    if (filterStok) {
+      const stok = p.stok_total ?? 0, min = p.stok_minimum ?? 0
+      if (filterStok === 'habis' && stok > 0) return false
+      if (filterStok === 'minim' && !(stok > 0 && stok <= min)) return false
+      if (filterStok === 'aman' && !(stok > min)) return false
+    }
+    return true
+  })
+
+  // Filter laporan penjualan (dipakai tab Penjualan & Metode Bayar)
+  const riwayatFiltered = riwayat.filter(x => {
+    const d = (x.created_at || '').split('T')[0]
+    if (lapDari && d < lapDari) return false
+    if (lapSampai && d > lapSampai) return false
+    if (lapMetode && (x.metode_bayar || 'Tunai') !== lapMetode) return false
+    if (lapStatus && (x.status || 'selesai') !== lapStatus) return false
+    return true
+  })
 
   const kategoriLabel: Record<string, string> = {
     bebas: 'Bebas', bebas_terbatas: 'Bebas Terbatas', keras: 'Keras',
@@ -2691,7 +2735,7 @@ const batalRetur = async (row: any) => {
               </div>
 
               {/* Stok minim + Segera expired */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
                 <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center"><Pill size={16} /></div>
@@ -2730,6 +2774,40 @@ const batalRetur = async (row: any) => {
                             </div>
                             <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${days <= 0 ? 'bg-red-200 text-red-800' : days <= 30 ? 'bg-red-50 text-red-600' : 'bg-yellow-50 text-yellow-700'}`}>
                               {days <= 0 ? t('Expired', 'Expired') : `${days} ${t('hari', 'days')}`}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Tagihan faktur akan jatuh tempo (ringkas) */}
+                <div className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-[#f2ddd0] text-[#a8532a] flex items-center justify-center"><Receipt size={16} /></div>
+                      <h3 className="font-bold text-[#1c2620]">{t('Jatuh Tempo', 'Invoices Due')}</h3>
+                    </div>
+                    {dueInvoices.length > 0 && (
+                      <button onClick={() => setActivePage('faktur')} className="text-xs font-medium text-[#1e3a2c] hover:underline">{t('Semua', 'All')}</button>
+                    )}
+                  </div>
+                  {dueInvoices.length === 0 ? (
+                    <p className="text-center text-xs text-[#9ca3af] py-6">{t('Tidak ada tagihan 👍', 'No invoices due 👍')}</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {dueInvoices.map((f: any, i: number) => {
+                        const days = Math.ceil((new Date(f.tanggal_jatuh_tempo).getTime() - new Date().setHours(0,0,0,0)) / 86400000)
+                        const badge = days < 0 ? 'bg-red-200 text-red-800' : days <= 7 ? 'bg-red-50 text-red-600' : days <= 14 ? 'bg-yellow-50 text-yellow-700' : 'bg-[#eef0ea] text-[#2f5741]'
+                        return (
+                          <div key={i} className="flex items-center justify-between text-sm py-1.5 border-b border-[#f0ede6] last:border-0">
+                            <div className="min-w-0 pr-2">
+                              <p className="text-[#1c2620] truncate">{f.suppliers?.nama_supplier || '-'}</p>
+                              <p className="text-[10px] text-[#9ca3af] tabular-nums">Rp {(f.total || 0).toLocaleString('id-ID')}</p>
+                            </div>
+                            <span className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${badge}`}>
+                              {days < 0 ? `${t('Telat', 'Late')} ${Math.abs(days)}${t('h', 'd')}` : days === 0 ? t('Hari ini', 'Today') : `${days} ${t('hari', 'days')}`}
                             </span>
                           </div>
                         )
@@ -3106,10 +3184,35 @@ const batalRetur = async (row: any) => {
                 </div>
               )}
 
-              <div className="mb-4">
-                <input type="text" placeholder={t('Cari nama obat, generik, atau kandungan...', 'Search drug name, generic, or ingredient...')}
-                  value={search} onChange={(e) => setSearch(e.target.value)}
-                  className="w-full border border-[#d1cdc4] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1e3a2c] placeholder-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+              <div className="mb-4 flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
+                  <input type="text" placeholder={t('Cari nama obat, generik, atau kandungan...', 'Search drug name, generic, or ingredient...')}
+                    value={search} onChange={(e) => setSearch(e.target.value)}
+                    className="w-full border border-[#d1cdc4] bg-white rounded-lg pl-9 pr-4 py-2.5 text-sm text-[#1e3a2c] placeholder-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                </div>
+                <select value={filterKategori} onChange={e => setFilterKategori(e.target.value)}
+                  className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2.5 text-sm text-[#1e3a2c] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                  <option value="">{t('Semua Kategori', 'All Categories')}</option>
+                  {Object.keys(kategoriLabel).map(k => <option key={k} value={k}>{kategoriLabel[k]}</option>)}
+                </select>
+                <select value={filterStok} onChange={e => setFilterStok(e.target.value)}
+                  className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2.5 text-sm text-[#1e3a2c] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                  <option value="">{t('Semua Stok', 'All Stock')}</option>
+                  <option value="aman">{t('Stok Aman', 'Healthy')}</option>
+                  <option value="minim">{t('Stok Minim', 'Low')}</option>
+                  <option value="habis">{t('Stok Habis', 'Out of stock')}</option>
+                </select>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                  className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2.5 text-sm text-[#1e3a2c] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                  <option value="">{t('Semua Status', 'All Status')}</option>
+                  <option value="aktif">{t('Aktif', 'Active')}</option>
+                  <option value="nonaktif">{t('Nonaktif', 'Inactive')}</option>
+                </select>
+                {(filterKategori || filterStok || filterStatus || search) && (
+                  <button onClick={() => { setSearch(''); setFilterKategori(''); setFilterStok(''); setFilterStatus('') }}
+                    className="px-3 py-2.5 rounded-lg text-sm text-[#6b7280] border border-[#d1cdc4] hover:bg-gray-50 whitespace-nowrap">{t('Reset', 'Reset')}</button>
+                )}
               </div>
 
               <div className={TBL_WRAP}>
@@ -3129,10 +3232,10 @@ const batalRetur = async (row: any) => {
                   <tbody>
                     {loading ? (
                       <tr><td className="px-4 py-10 text-center text-[#9ca3af]" colSpan={8}>{t('Memuat data...', 'Loading data...')}</td></tr>
-                    ) : filteredProducts.length === 0 ? (
+                    ) : produkFiltered.length === 0 ? (
                       <tr><td className="px-4 py-10 text-center text-[#9ca3af]" colSpan={8}>{t('Tidak ada produk ditemukan', 'No products found')}</td></tr>
                     ) : (
-                      filteredProducts.map((p) => {
+                      produkFiltered.map((p) => {
                         const habis = (p.stok_total ?? 0) <= 0
                         const minim = !habis && (p.stok_total ?? 0) <= (p.stok_minimum ?? 0)
                         const stokCls = habis ? 'bg-red-50 text-red-600 ring-1 ring-red-500/20' : minim ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-500/20' : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500/20'
@@ -3303,9 +3406,22 @@ const batalRetur = async (row: any) => {
                         <span className="text-[#1e3a2c]">Rp {keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0).toLocaleString('id-ID')}</span>
                       </div>
                     </div>
-                    {keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori)) && (
-                      <div className="mb-4 p-3 rounded-xl border border-amber-300 bg-amber-50 space-y-2">
-                        <p className="text-xs font-semibold text-amber-800">⚠️ {t('Ada obat Narkotika/Psikotropika/Prekursor — wajib isi data pasien & resep', 'Contains Narcotics/Psychotropics/Precursors — patient & prescription data required')}</p>
+                    {(() => {
+                      const hasGolongan = keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori))
+                      return (<>
+                      {!hasGolongan && (
+                        <label className="mb-3 flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-[#d1cdc4] bg-white cursor-pointer hover:bg-[#f5f2eb] transition">
+                          <input type="checkbox" checked={isResep} onChange={e => setIsResep(e.target.checked)}
+                            className="w-4 h-4 accent-[#1e3a2c]" />
+                          <div>
+                            <span className="text-sm font-medium text-[#1e3a2c]">{t('Transaksi berupa resep', 'This is a prescription sale')}</span>
+                            <p className="text-xs text-[#9ca3af]">{t('Centang untuk mengisi data pasien & no. resep', 'Tick to record patient data & prescription no.')}</p>
+                          </div>
+                        </label>
+                      )}
+                      {(hasGolongan || isResep) && (
+                      <div className={`mb-4 p-3 rounded-xl border space-y-2 ${hasGolongan ? 'border-amber-300 bg-amber-50' : 'border-[#cfe0d4] bg-[#f2f7f3]'}`}>
+                        <p className={`text-xs font-semibold ${hasGolongan ? 'text-amber-800' : 'text-[#2f5741]'}`}>{hasGolongan ? '⚠️ ' + t('Ada obat Narkotika/Psikotropika/Prekursor — wajib isi data pasien & resep', 'Contains Narcotics/Psychotropics/Precursors — patient & prescription data required') : '📋 ' + t('Data Pasien & Resep', 'Patient & Prescription Data')}</p>
                         <input value={pasienForm.nomor_resep} onChange={e => setPasienForm({...pasienForm, nomor_resep: e.target.value})}
                           placeholder={t('No. Resep *', 'Prescription No. *')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         <input value={pasienForm.nama_pasien} onChange={e => setPasienForm({...pasienForm, nama_pasien: e.target.value})}
@@ -3317,7 +3433,9 @@ const batalRetur = async (row: any) => {
                             placeholder={t('Alamat', 'Address')} className="w-full border border-[#d1cdc4] rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
                         </div>
                       </div>
-                    )}
+                      )}
+                      </>)
+                    })()}
                     <div className="mb-3">
                       <label className="text-xs font-medium text-[#6b7280] mb-1 block">{t('Metode Pembayaran', 'Payment Method')}</label>
                       <div className="grid grid-cols-3 gap-1.5 mb-3">
@@ -3349,9 +3467,12 @@ const batalRetur = async (row: any) => {
                       if (over) return alert(t(`Stok ${over.nama_obat} tidak cukup — tersedia ${over.stok_total}, diminta ${over.jumlah}.`, `Insufficient stock for ${over.nama_obat} — available ${over.stok_total}, requested ${over.jumlah}.`))
                       const total = keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)
                       if (bayar < total) return alert(t('Pembayaran kurang!', 'Insufficient payment!'))
-                      const perluResep = keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori))
+                      const hasGolongan = keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori))
+                      const perluResep = hasGolongan || isResep
                       if (perluResep && (!pasienForm.nama_pasien.trim() || !pasienForm.nomor_resep.trim())) {
-                        return alert(t('Obat golongan Narkotika/Psikotropika/Prekursor wajib mengisi Nama Pasien dan No. Resep.', 'Narcotics/Psychotropics/Precursors require Patient Name and Prescription No.'))
+                        return alert(hasGolongan
+                          ? t('Obat golongan Narkotika/Psikotropika/Prekursor wajib mengisi Nama Pasien dan No. Resep.', 'Narcotics/Psychotropics/Precursors require Patient Name and Prescription No.')
+                          : t('Transaksi resep wajib mengisi Nama Pasien dan No. Resep.', 'Prescription sale requires Patient Name and Prescription No.'))
                       }
                       const kembalian = bayar - total
                       setProsesLoading(true)
@@ -3378,13 +3499,13 @@ const batalRetur = async (row: any) => {
                         setKeranjang([])
                         setBayar(0)
                         setMetodeBayar('Tunai')
-                        setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' })
+                        setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' }); setIsResep(false)
                       } catch(e) { alert(t('Terjadi kesalahan, coba lagi', 'An error occurred, please try again')) }
                       finally { setProsesLoading(false) }
                     }} className="w-full bg-[#1e3a2c] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#24462f] transition disabled:opacity-50">
                       {(isSuper && !superViewCompany) ? t('🔒 Pilih apotek dulu', '🔒 Select a pharmacy first') : prosesLoading ? t('Memproses...', 'Processing...') : t('Proses Transaksi', 'Process Transaction')}
                     </button>
-                    <button onClick={() => { setKeranjang([]); setBayar(0); setMetodeBayar('Tunai'); setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' }) }}
+                    <button onClick={() => { setKeranjang([]); setBayar(0); setMetodeBayar('Tunai'); setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' }); setIsResep(false) }}
                       className="w-full mt-2 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition">
                       {t('Batal / Reset', 'Cancel / Reset')}
                     </button>
@@ -3900,13 +4021,113 @@ const batalRetur = async (row: any) => {
               <p className="text-[#6b7280] text-sm mb-5">{t('Laporan penjualan & laporan SIPNAP (Narkotika/Psikotropika/Prekursor)', 'Sales reports & SIPNAP reports (Narcotics/Psychotropics/Precursors)')}</p>
 
               <div className="flex gap-1 mb-5">
-                {([{id:'penjualan',label:t('Penjualan','Sales')},{id:'sipnap',label:'SIPNAP'}] as const).map(tab => (
+                {([{id:'penjualan',label:t('Penjualan','Sales')},{id:'metode',label:t('Metode Bayar','Payment Methods')},{id:'sipnap',label:'SIPNAP'}] as const).map(tab => (
                   <button key={tab.id} onClick={() => setLaporanTab(tab.id)}
                     className={`px-4 py-2 rounded-xl text-sm font-medium transition ${laporanTab === tab.id ? 'bg-[#1e3a2c] text-white' : 'text-[#6b7280] hover:bg-white/60'}`}>
                     {tab.label}
                   </button>
                 ))}
               </div>
+
+              {/* Filter bar (Penjualan & Metode Bayar) */}
+              {(laporanTab === 'penjualan' || laporanTab === 'metode') && (
+                <div className="mb-5 flex flex-wrap items-end gap-3 bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-3">
+                  <div>
+                    <label className="text-[11px] font-medium text-[#6b7280] mb-1 block uppercase tracking-wide">{t('Dari Tgl', 'From')}</label>
+                    <input type="date" value={lapDari} onChange={e => setLapDari(e.target.value)}
+                      className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-[#6b7280] mb-1 block uppercase tracking-wide">{t('Sampai Tgl', 'To')}</label>
+                    <input type="date" value={lapSampai} onChange={e => setLapSampai(e.target.value)}
+                      className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-[#6b7280] mb-1 block uppercase tracking-wide">{t('Metode', 'Method')}</label>
+                    <select value={lapMetode} onChange={e => setLapMetode(e.target.value)}
+                      className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                      <option value="">{t('Semua', 'All')}</option>
+                      {['Tunai','QRIS','Transfer','Debit','Kartu Kredit'].map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-[#6b7280] mb-1 block uppercase tracking-wide">Status</label>
+                    <select value={lapStatus} onChange={e => setLapStatus(e.target.value)}
+                      className="border border-[#d1cdc4] bg-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                      <option value="">{t('Semua', 'All')}</option>
+                      <option value="selesai">{t('Selesai', 'Completed')}</option>
+                      <option value="dibatalkan">{t('Dibatalkan', 'Cancelled')}</option>
+                    </select>
+                  </div>
+                  {(lapDari || lapSampai || lapMetode || lapStatus) && (
+                    <button onClick={() => { setLapDari(''); setLapSampai(''); setLapMetode(''); setLapStatus('') }}
+                      className="px-3 py-2 rounded-lg text-sm text-[#6b7280] border border-[#d1cdc4] hover:bg-gray-50">{t('Reset', 'Reset')}</button>
+                  )}
+                </div>
+              )}
+
+              {/* Tab Metode Bayar — rekap uang per metode */}
+              {laporanTab === 'metode' && (() => {
+                const aktif = riwayatFiltered.filter(x => x.status !== 'dibatalkan')
+                const metodeList = ['Tunai','QRIS','Transfer','Debit','Kartu Kredit']
+                const rekap = metodeList.map(m => {
+                  const rows = aktif.filter(x => (x.metode_bayar || 'Tunai') === m)
+                  return { metode: m, count: rows.length, total: rows.reduce((a, b) => a + (b.total || 0), 0) }
+                })
+                const grand = rekap.reduce((a, b) => a + b.total, 0)
+                const grandCount = rekap.reduce((a, b) => a + b.count, 0)
+                const ikon: Record<string, string> = { Tunai: '💵', QRIS: '📱', Transfer: '🏦', Debit: '💳', 'Kartu Kredit': '💳' }
+                return (
+                  <div>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+                      {rekap.map(r => (
+                        <div key={r.metode} className="bg-white/80 backdrop-blur-sm border border-[#e8e4d9] rounded-2xl shadow-sm p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="text-lg">{ikon[r.metode]}</span>
+                            <span className="text-xs font-semibold text-[#6b7280] uppercase tracking-wide">{r.metode}</span>
+                          </div>
+                          <p className="text-lg font-bold text-[#1c2620] tabular-nums leading-none">Rp {r.total.toLocaleString('id-ID')}</p>
+                          <p className="text-xs text-[#9ca3af] mt-1.5">{r.count} {t('transaksi', 'transactions')}</p>
+                          {grand > 0 && (
+                            <div className="mt-2 h-1.5 rounded-full bg-[#eef0ea] overflow-hidden">
+                              <div className="h-full rounded-full bg-[#2f5741]" style={{ width: `${grand ? (r.total / grand) * 100 : 0}%` }} />
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div className={TBL_WRAP}>
+                      <table className={TBL}>
+                        <thead className={THEAD}>
+                          <tr>
+                            <th className={TH_L}>{t('Metode Pembayaran', 'Payment Method')}</th>
+                            <th className={TH_C}>{t('Jumlah Transaksi', 'Transactions')}</th>
+                            <th className={TH_R}>{t('Total Diterima', 'Total Received')}</th>
+                            <th className={TH_R}>{t('% dari Total', '% of Total')}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rekap.map(r => (
+                            <tr key={r.metode} className={TR}>
+                              <td className={TD + ' font-medium text-[#1c2620]'}>{ikon[r.metode]} {r.metode}</td>
+                              <td className={TD + ' text-center text-[#6b7280] tabular-nums'}>{r.count}</td>
+                              <td className={TD + ' text-right font-medium text-[#1c2620] tabular-nums'}>Rp {r.total.toLocaleString('id-ID')}</td>
+                              <td className={TD + ' text-right text-[#6b7280] tabular-nums'}>{grand ? ((r.total / grand) * 100).toFixed(1) : '0.0'}%</td>
+                            </tr>
+                          ))}
+                          <tr className="bg-[#f6f4ee] border-t-2 border-[#1e3a2c]">
+                            <td className={TD + ' font-bold text-[#1e3a2c]'}>TOTAL</td>
+                            <td className={TD + ' text-center font-bold text-[#1e3a2c] tabular-nums'}>{grandCount}</td>
+                            <td className={TD + ' text-right font-bold text-[#1e3a2c] tabular-nums'}>Rp {grand.toLocaleString('id-ID')}</td>
+                            <td className={TD + ' text-right font-bold text-[#1e3a2c]'}>100%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-[#9ca3af] mt-3">{t('Rekap uang masuk per metode pembayaran (transaksi dibatalkan tidak dihitung). Gunakan untuk mencocokkan uang tunai & saldo QRIS/transfer dengan fisik.', 'Money-in recap per payment method (cancelled transactions excluded). Use it to reconcile cash & QRIS/transfer balances with actuals.')}</p>
+                  </div>
+                )
+              })()}
 
               {laporanTab === 'sipnap' && (
                 <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-2xl shadow-sm p-6 max-w-2xl">
@@ -3952,6 +4173,7 @@ const batalRetur = async (row: any) => {
                     <tr>
                       <th className={TH_L}>{t('No. Transaksi', 'Transaction No.')}</th>
                       <th className={TH_L}>{t('Waktu', 'Time')}</th>
+                      <th className={TH_C}>{t('Metode', 'Method')}</th>
                       <th className={TH_R}>Total</th>
                       <th className={TH_R}>{t('Bayar', 'Paid')}</th>
                       <th className={TH_R}>{t('Kembalian', 'Change')}</th>
@@ -3960,14 +4182,17 @@ const batalRetur = async (row: any) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {riwayat.length === 0 ? (
-                      <tr><td colSpan={7} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada transaksi', 'No transactions yet')}</td></tr>
+                    {riwayatFiltered.length === 0 ? (
+                      <tr><td colSpan={8} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada transaksi', 'No transactions yet')}</td></tr>
                     ) : (
-                      riwayat.map(trx => (
+                      riwayatFiltered.map(trx => (
                         <tr key={trx.id} className={TR}>
                           <td className="px-4 py-3 font-mono text-xs text-[#1e3a2c] font-medium">{trx.nomor_transaksi}</td>
                           <td className="px-4 py-3 text-[#6b7280]">
                             {new Date(trx.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#eef0ea] text-[#2f5741]">{trx.metode_bayar || 'Tunai'}</span>
                           </td>
                           <td className="px-4 py-3 text-right font-medium text-[#1e3a2c]">Rp {trx.total?.toLocaleString('id-ID')}</td>
                           <td className="px-4 py-3 text-right text-[#6b7280]">Rp {trx.bayar?.toLocaleString('id-ID')}</td>
@@ -4011,11 +4236,11 @@ const batalRetur = async (row: any) => {
                   </tbody>
                 </table>
               </div>
-              {riwayat.length > 0 && (
+              {riwayatFiltered.length > 0 && (
                 <div className="mt-4 bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-4 flex justify-between items-center">
-                  <span className="text-sm text-[#6b7280]">Total {riwayat.length} {t('transaksi', 'transactions')}</span>
+                  <span className="text-sm text-[#6b7280]">Total {riwayatFiltered.length} {t('transaksi', 'transactions')}</span>
                   <span className="text-sm font-semibold text-[#1e3a2c]">
-                    {t('Total Omzet', 'Total Revenue')}: Rp {riwayat.filter(x => x.status !== 'dibatalkan').reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
+                    {t('Total Omzet', 'Total Revenue')}: Rp {riwayatFiltered.filter(x => x.status !== 'dibatalkan').reduce((a, b) => a + b.total, 0).toLocaleString('id-ID')}
                   </span>
                 </div>
               )}

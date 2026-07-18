@@ -3,7 +3,8 @@
 import { useEffect } from 'react'
 import {
   FlaskConical, ShoppingCart, ClipboardList, Receipt, BarChart2, Database,
-  Users, ShieldCheck, Pill, Truck, CalendarClock, Wallet, Check, ArrowRight
+  Users, ShieldCheck, Pill, Truck, CalendarClock, Wallet, Check, ArrowRight,
+  Wand2, TrendingUp, PieChart, Languages, LayoutDashboard, Settings, Menu
 } from 'lucide-react'
 import { useLang, LangToggle } from '../../lib/i18n'
 
@@ -23,6 +24,26 @@ const CSS = `
 .kn-win { box-shadow: 0 40px 90px -30px rgba(20,40,29,.55); }
 .kn-headline { letter-spacing:-0.02em; line-height:1.02; }
 @media (prefers-reduced-motion: reduce){ .reveal{ opacity:1; transform:none; transition:none; } }
+
+/* ── Device showcase (MacBook Pro + iPhone Pro) ── */
+.dev-stage{ position:relative; max-width:720px; margin:0 auto; padding-bottom:1%; }
+.macbook{ position:relative; width:80%; }
+.mb-lid{ background:#0a0b0d; border:1px solid #34373c; border-radius:11px 11px 5px 5px; padding:0.85% 0.85% 1.5%; box-shadow:0 46px 86px -32px rgba(20,40,29,.5); }
+.mb-cam{ display:block; width:4px; height:4px; margin:0 auto 0.6%; border-radius:50%; background:#141619; box-shadow:inset 0 0 0 1px #2c2f34; }
+.mb-screen{ border-radius:5px; overflow:hidden; background:#0f1a14; aspect-ratio:16/10.2; }
+.mb-deck{ position:relative; width:113%; margin-left:-6.5%; height:clamp(11px,2.1vw,22px); background:linear-gradient(180deg,#4a4d53 0%,#303338 42%,#191a1d 100%); border-radius:3px 3px 11px 11px; box-shadow:0 22px 30px -14px rgba(20,40,29,.34); }
+.mb-deck::before{ content:''; position:absolute; left:0; right:0; top:0; height:1.5px; background:rgba(255,255,255,.22); border-radius:3px 3px 0 0; }
+.mb-groove{ position:absolute; top:0; left:50%; transform:translateX(-50%); width:13%; height:46%; background:#141619; border-radius:0 0 9px 9px; }
+.iphone{ position:absolute; right:0; bottom:-9%; width:22.5%; min-width:134px; background:linear-gradient(150deg,#3b3e43 0%,#141518 62%); border-radius:26px; padding:1.4%; box-shadow:0 38px 62px -18px rgba(20,40,29,.55); z-index:5; }
+.iphone-inner{ position:relative; background:#e9ede7; border-radius:22px; overflow:hidden; aspect-ratio:9/19.5; }
+.ip-island{ position:absolute; z-index:6; top:3.4%; left:50%; transform:translateX(-50%); width:30%; height:3%; background:#000; border-radius:20px; }
+.ip-side{ position:absolute; background:#25272b; border-radius:2px; }
+.ip-pw{ right:-2px; top:27%; width:2.5px; height:12%; }
+.ip-cam{ right:-2px; top:43%; width:2.5px; height:7%; }
+.ip-v1{ left:-2px; top:23%; width:2.5px; height:6%; }
+.ip-v2{ left:-2px; top:32%; width:2.5px; height:9%; }
+.ip-v3{ left:-2px; top:44%; width:2.5px; height:9%; }
+@media (max-width:560px){ .macbook{ width:90%; } .iphone{ width:30%; right:-4%; bottom:-11%; } }
 `
 
 // Mini mockup jendela aplikasi (memakai tema asli)
@@ -55,6 +76,135 @@ function Stat({ chip, label, value, Icon }: any) {
   )
 }
 
+// Recreation Dashboard (di dalam layar MacBook) + Kasir mobile (di dalam iPhone)
+function DeviceShowcase({ t }: { t: (id: string, en: string) => string }) {
+  const nav = [
+    [LayoutDashboard, t('Dashboard', 'Dashboard'), true],
+    [Pill, t('Produk & Stok', 'Products & Stock'), false],
+    [ShoppingCart, t('Kasir', 'Sales'), false],
+    [Wand2, t('Pembelian', 'Purchasing'), false],
+    [Receipt, t('Pembayaran Faktur', 'Invoice Payments'), false],
+    [BarChart2, t('Laporan', 'Reports'), false],
+    [Settings, t('Pengaturan', 'Settings'), false],
+  ] as const
+  const stats = [
+    [Pill, 'bg-[#dce5db] text-[#2f5741]', t('TOTAL PRODUK', 'TOTAL PRODUCTS'), '100'],
+    [ShoppingCart, 'bg-[#dce5db] text-[#2f5741]', t('PENJUALAN HARI INI', 'SALES TODAY'), '3'],
+    [CalendarClock, 'bg-[#f5e6c8] text-[#8a6d1f]', t('EXPIRED ≤60 HARI', 'EXPIRING ≤60 DAYS'), '3'],
+    [Wallet, 'bg-[#f0dcd2] text-[#a75a34]', t('OMZET HARI INI', 'REVENUE TODAY'), 'Rp 10.095.000'],
+  ] as const
+  const sellers: [string, number][] = [['Sarung Tangan Latex (M)', 160], ['Tolak Angin Cair 15 ml', 10], ['Simvastatin 20 mg', 10], ['Konidin Tablet', 10]]
+  const bars = [3, 3, 3, 3, 3, 2, 62]
+  const cashItems: [string, string, string][] = [
+    ['Sanmol Tablet 500 mg', 'Paracetamol · Stock: 300', 'Rp 3.000'],
+    ['Panadol Regular Caplet', 'Paracetamol · Stock: 240', 'Rp 11.000'],
+    ['Bodrex Tablet', 'Paracetamol + Caffeine · Stock: 500', 'Rp 5.500'],
+    ['Darlie Routines Flu & Batuk', 'Paracetamol + Herbal · Stock: 200', 'Rp 4.800'],
+  ]
+  return (
+    <div className="dev-stage">
+      {/* MacBook Pro */}
+      <div className="macbook">
+        <div className="mb-lid">
+          <span className="mb-cam" />
+          <div className="mb-screen">
+          <div className="flex h-full text-[#1c2620] bg-[#f3f1ea]">
+            {/* Sidebar */}
+            <div className="w-[24%] shrink-0 bg-gradient-to-b from-[#1e3a2c] to-[#26301f] px-[3%] py-[3.5%] flex flex-col">
+              <div className="flex items-center gap-1.5 mb-[8%]">
+                <div className="w-[18%] aspect-square rounded-md bg-white/10 flex items-center justify-center"><FlaskConical className="text-white w-1/2 h-1/2" /></div>
+                <div className="leading-none"><div className="text-white font-bold text-[0.62vw] sm:text-[0.6vw]" style={{ fontSize: 'clamp(6px,0.85vw,11px)' }}>Seawise Enterprise</div><div className="text-[#9db3a5]" style={{ fontSize: 'clamp(5px,0.7vw,9px)' }}>Pharmacy Store Edition</div></div>
+              </div>
+              <div className="rounded-md bg-white/10 text-white/90 px-2 py-1 mb-[7%] truncate" style={{ fontSize: 'clamp(5px,0.75vw,10px)' }}>Apotek Rakyat Sejahtera</div>
+              <div className="space-y-[4%]">
+                {nav.map(([Ic, label, active], i) => (
+                  <div key={i} className={`flex items-center gap-1.5 rounded-md px-2 py-1 ${active ? 'bg-white/12 text-white' : 'text-[#9db3a5]'}`} style={{ fontSize: 'clamp(5px,0.78vw,10px)' }}>
+                    <Ic className="w-[11px] h-[11px] shrink-0" /> <span className="truncate">{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {/* Main */}
+            <div className="flex-1 min-w-0 px-[3.2%] py-[2.8%] flex flex-col overflow-hidden">
+              <p className="font-bold text-[#1c2620] leading-none shrink-0" style={{ fontSize: 'clamp(11px,1.7vw,24px)' }}>Dashboard</p>
+              <p className="text-[#6b7280] mt-1 mb-[3%] shrink-0" style={{ fontSize: 'clamp(6px,0.78vw,11px)' }}>Hello, apt. Anessa Beckham 👋 — {t('ringkasan aktivitas apotek', "today's pharmacy summary")}</p>
+              {/* Stat cards */}
+              <div className="grid grid-cols-4 gap-[2.2%] mb-[3%] shrink-0">
+                {stats.map(([Ic, chip, label, val], i) => (
+                  <div key={i} className="bg-white/80 border border-white/70 rounded-lg px-[8%] py-[7%]">
+                    <div className={`rounded-md flex items-center justify-center mb-[12%] ${chip}`} style={{ width: 'clamp(14px,1.7vw,28px)', height: 'clamp(14px,1.7vw,28px)' }}><Ic className="w-1/2 h-1/2" /></div>
+                    <p className="text-[#6b7280] uppercase tracking-wide leading-tight" style={{ fontSize: 'clamp(4.5px,0.6vw,8px)' }}>{label}</p>
+                    <p className="font-bold text-[#1c2620] leading-tight mt-0.5" style={{ fontSize: 'clamp(7px,1vw,14px)' }}>{val}</p>
+                  </div>
+                ))}
+              </div>
+              {/* Chart + Best sellers */}
+              <div className="grid grid-cols-3 gap-[2.2%] flex-1 min-h-0">
+                <div className="col-span-2 bg-white/80 border border-white/70 rounded-lg p-[3.2%] flex flex-col min-h-0">
+                  <div className="flex items-center justify-between mb-[2%] shrink-0">
+                    <div>
+                      <p className="font-bold text-[#1c2620]" style={{ fontSize: 'clamp(6px,0.85vw,12px)' }}>Sales — Last 7 Days</p>
+                      <div className="flex items-center gap-2 mt-0.5" style={{ fontSize: 'clamp(4.5px,0.62vw,8px)' }}><span className="text-[#2f5741]">● Revenue</span><span className="text-[#c2632f]">━ Transactions</span></div>
+                    </div>
+                    <p className="font-bold text-[#1e3a2c]" style={{ fontSize: 'clamp(6px,0.9vw,13px)' }}>Rp 10.095.000</p>
+                  </div>
+                  <svg viewBox="0 0 260 92" preserveAspectRatio="xMidYMid meet" className="w-full flex-1 min-h-0">
+                    {[0, 0.5, 1].map((g, i) => <line key={i} x1="8" x2="252" y1={78 - g * 62} y2={78 - g * 62} stroke="#eceae3" strokeWidth="1" />)}
+                    {bars.map((h, i) => { const bh = (h / 62) * 62; return <rect key={i} x={14 + i * 34} y={78 - bh} width="17" height={bh} rx="3" fill="#1e3a2c" /> })}
+                    <path d="M22,75 L56,75 L90,75 L124,75 L158,75 L192,77 L226,16" fill="none" stroke="#c2632f" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+                    {[[22, 75], [56, 75], [90, 75], [124, 75], [158, 75], [192, 77], [226, 16]].map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2.6" fill="#fff" stroke="#c2632f" strokeWidth="1.8" />)}
+                  </svg>
+                </div>
+                <div className="bg-white/80 border border-white/70 rounded-lg p-[6%] min-h-0 overflow-hidden">
+                  <p className="font-bold text-[#1c2620] mb-[9%]" style={{ fontSize: 'clamp(6px,0.85vw,12px)' }}>Best Sellers</p>
+                  <div className="space-y-[10%]">
+                    {sellers.map(([nm, q], i) => (
+                      <div key={i}>
+                        <div className="flex justify-between text-[#1c2620] mb-0.5" style={{ fontSize: 'clamp(4.5px,0.6vw,8px)' }}><span className="truncate pr-1">{i + 1}. {nm}</span><span>{q}</span></div>
+                        <div className="h-[3px] rounded-full bg-[#eef0ea]"><div className="h-full rounded-full bg-[#2f5741]" style={{ width: `${Math.max(8, (q / 160) * 100)}%` }} /></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </div>
+        </div>
+        <div className="mb-deck"><span className="mb-groove" /></div>
+      </div>
+
+      {/* iPhone Pro — Kasir mobile */}
+      <div className="iphone">
+        <span className="ip-island" />
+        <span className="ip-side ip-pw" /><span className="ip-side ip-cam" />
+        <span className="ip-side ip-v1" /><span className="ip-side ip-v2" /><span className="ip-side ip-v3" />
+        <div className="iphone-inner">
+          <div className="bg-[#1e3a2c] text-white flex items-center gap-1.5 px-[6%] pt-[14%] pb-[5%]"><Menu className="w-3 h-3" /> <span style={{ fontSize: 'clamp(6px,1.4vw,11px)' }}>Apotek Sejahtera</span></div>
+          <div className="px-[6%] py-[5%]">
+            <p className="font-bold text-[#1c2620]" style={{ fontSize: 'clamp(9px,2vw,15px)' }}>Cashier</p>
+            <p className="text-[#6b7280] mb-[5%]" style={{ fontSize: 'clamp(5px,1.1vw,9px)' }}>Medicine sales transactions</p>
+            <div className="bg-white/80 border border-white/70 rounded-lg p-[4%]">
+              <div className="rounded-md border border-[#d1cdc4] bg-white px-2 py-1.5 mb-[4%] text-[#1c2620]" style={{ fontSize: 'clamp(6px,1.3vw,10px)' }}>Para</div>
+              {cashItems.map(([nm, sub, pr], i) => (
+                <div key={i} className="flex items-center justify-between py-[3%] border-b border-[#f0ede6] last:border-0">
+                  <div className="min-w-0 pr-1"><p className="text-[#1c2620] truncate" style={{ fontSize: 'clamp(5.5px,1.2vw,10px)' }}>{nm}</p><p className="text-[#9ca3af] truncate" style={{ fontSize: 'clamp(4.5px,0.95vw,8px)' }}>{sub}</p></div>
+                  <span className="text-[#1c2620] shrink-0" style={{ fontSize: 'clamp(5.5px,1.2vw,10px)' }}>{pr}</span>
+                </div>
+              ))}
+            </div>
+            <div className="bg-white/80 border border-white/70 rounded-lg p-[5%] mt-[5%]">
+              <p className="font-bold text-[#1c2620] mb-[5%]" style={{ fontSize: 'clamp(6px,1.4vw,11px)' }}>Transaction Summary</p>
+              <div className="flex justify-between text-[#6b7280] mb-1" style={{ fontSize: 'clamp(5.5px,1.2vw,10px)' }}><span>Total Items</span><span>0 items</span></div>
+              <div className="flex justify-between font-semibold text-[#1c2620] border-t border-[#f0ede6] pt-1" style={{ fontSize: 'clamp(5.5px,1.2vw,10px)' }}><span>Total</span><span>Rp 0</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Kenapa() {
   const { t } = useLang()
   useEffect(() => {
@@ -66,6 +216,30 @@ export default function Kenapa() {
   }, [])
 
   const spotlights = [
+    { tag: t('DASHBOARD ANALITIK', 'ANALYTICS DASHBOARD'), title: t('Kondisi apotek, dalam sekali pandang.', 'Your whole pharmacy, at a glance.'), body: t('Grafik penjualan interaktif — batang omzet dipadu garis jumlah transaksi, bisa ganti rentang 7 atau 30 hari. Di bawahnya: produk terlaris, stok yang menipis, barang segera expired, dan tagihan yang akan jatuh tempo. Semua real-time, tanpa perlu buka laporan.', 'An interactive sales chart — revenue bars paired with a transaction-count line, switchable between 7 or 30 days. Below it: best sellers, low stock, items expiring soon, and invoices coming due. All real-time, no report needed.'), Icon: TrendingUp,
+      visual: (<AppWindow><div className="space-y-3">
+        <div className="grid grid-cols-3 gap-1.5">
+          {[[t('Omzet','Revenue'),'Rp8,4jt','bg-[#f0dcd2] text-[#a75a34]'],[t('Transaksi','Sales'),'87','bg-[#dce5db] text-[#2f5741]'],[t('Produk','Products'),'1.240','bg-[#dce5db] text-[#2f5741]']].map((c,i)=>(<div key={i} className="rounded-lg border border-[#eceae3] p-2"><p className="text-[8px] text-[#9ca3af] uppercase tracking-wide">{c[0]}</p><p className="text-[11px] font-bold text-[#1c2620]">{c[1]}</p></div>))}
+        </div>
+        <div className="rounded-lg border border-[#eceae3] p-2.5">
+          <div className="flex items-center justify-between mb-1"><span className="text-[9px] font-semibold text-[#1c2620]">{t('Penjualan 7 Hari','Sales — 7 Days')}</span><div className="flex gap-1.5 text-[7px]"><span className="text-[#2f5741]">▉ {t('Omzet','Revenue')}</span><span className="text-[#c2632f]">━ {t('Transaksi','Trx')}</span></div></div>
+          <svg viewBox="0 0 240 74" className="w-full">
+            {[24,40,32,54,46,66,58].map((h,i)=>(<rect key={i} x={12+i*32} y={68-h} width="16" height={h} rx="3" fill="#1e3a2c" />))}
+            <path d="M20,42 C36,34 40,32 52,30 C68,27 72,40 84,38 C100,35 104,24 116,22 C132,20 136,32 148,30 C164,27 168,16 180,15 C196,14 200,22 212,24" fill="none" stroke="#c2632f" strokeWidth="2.4" strokeLinecap="round" />
+            {[[20,42],[52,30],[84,38],[116,22],[148,30],[180,15],[212,24]].map((p,i)=>(<circle key={i} cx={p[0]} cy={p[1]} r="2.4" fill="#fff" stroke="#c2632f" strokeWidth="1.8" />))}
+          </svg>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <div className="rounded-lg border border-[#eceae3] p-2"><p className="text-[8px] text-[#9ca3af] mb-0.5">{t('Stok Minim','Low Stock')}</p><p className="text-[10px] text-[#1c2620]">Amoxicillin <span className="text-red-500 font-semibold">2/10</span></p></div>
+          <div className="rounded-lg border border-[#eceae3] p-2"><p className="text-[8px] text-[#9ca3af] mb-0.5">{t('Jatuh Tempo','Due')}</p><p className="text-[10px] text-[#1c2620]">PBF Sehat <span className="text-amber-600 font-semibold">3 {t('hari','d')}</span></p></div>
+        </div>
+      </div></AppWindow>) },
+    { tag: t('ORDER TERPANDU', 'GUIDED ORDER'), title: t('Restok otomatis. PO terpecah sendiri.', 'Auto-restock. POs split themselves.'), body: t('Satu klik, sistem mengumpulkan semua barang yang mencapai stok minimum, menyarankan jumlah order, lalu otomatis membagi ke distributor masing-masing. Tinggal review — order langsung terpecah menjadi PO per supplier, siap kirim. Tak perlu lagi cek kartu stok satu per satu.', 'One click, the system gathers every item at minimum stock, suggests order quantities, then auto-assigns each to its distributor. Just review — the order splits into a PO per supplier, ready to send. No more checking stock cards one by one.'), Icon: Wand2,
+      visual: (<AppWindow><div className="space-y-2">
+        <div className="flex items-center gap-1.5 mb-1">{[t('Pilih','Select'),t('Bagi','Assign'),t('Buat','Create')].map((s,i)=>(<div key={i} className="flex items-center gap-1.5 flex-1"><span className={`w-4 h-4 rounded-full text-[8px] flex items-center justify-center ${i===0?'bg-[#1e3a2c] text-white':'bg-[#eceae3] text-[#9ca3af]'}`}>{i+1}</span><span className="text-[8px] text-[#6b7280]">{s}</span>{i<2&&<div className="flex-1 h-px bg-[#eceae3]" />}</div>))}</div>
+        {[['Amoxicillin 500','2/10','PBF Sehat'],['Paracetamol','5/20','PBF Sehat'],['Vitamin C','3/15','PT Kimia']].map((r,i)=>(<div key={i} className="flex items-center justify-between text-[10px] rounded-lg border border-[#eceae3] px-2.5 py-1.5"><span className="text-[#1c2620]">{r[0]}</span><span className="text-red-500">{r[1]}</span><span className="text-[9px] px-1.5 py-0.5 rounded bg-[#eef0ea] text-[#2f5741]">{r[2]}</span></div>))}
+        <div className="text-[9px] text-center text-[#2f5741] font-medium">→ 2 PO {t('siap kirim','ready to send')}</div>
+      </div></AppWindow>) },
     { tag: t('KASIR & KEPATUHAN', 'POS & COMPLIANCE'), title: t('Jual cepat, tetap patuh aturan.', 'Sell fast, stay compliant.'), body: t('Kasir ringan dengan metode bayar Tunai, QRIS, Transfer. Untuk obat Narkotika, Psikotropika & Prekursor, data pasien dan nomor resep wajib terisi otomatis — tercatat rapi untuk pelaporan.', 'A light POS with Cash, QRIS, and Transfer payments. For Narcotics, Psychotropics & Precursors, patient data and prescription number are required automatically — neatly recorded for reporting.'), Icon: ShoppingCart,
       visual: (<AppWindow><div className="space-y-2"><div className="h-8 rounded-lg bg-[#f5f2eb] flex items-center px-3 text-xs text-[#9ca3af]">Cari obat…</div><div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">⚠ Narkotika — isi data pasien & resep</div><div className="grid grid-cols-3 gap-1.5">{['Tunai','QRIS','Transfer'].map(m=><div key={m} className="text-[10px] text-center py-1.5 rounded-lg bg-[#1e3a2c] text-white">{m}</div>)}</div></div></AppWindow>) },
     { tag: t('STOK & EXPIRED', 'STOCK & EXPIRY'), title: t('Tak ada lagi obat kadaluarsa terbuang.', 'No more expired medicine wasted.'), body: t('Pantau batch & tanggal expired, dapat peringatan dini, lalu tindak lanjuti: musnahkan dengan Berita Acara resmi atau retur ke supplier — stok berkurang hanya setelah dikonfirmasi.', 'Track batches & expiry dates, get early alerts, then follow up: destroy with an official report or return to supplier — stock is only reduced after confirmation.'), Icon: CalendarClock,
@@ -79,14 +253,17 @@ export default function Kenapa() {
   ]
 
   const grid = [
-    { Icon: ShoppingCart, title: t('Kasir & Struk', 'POS & Receipts'), d: t('POS cepat, multi metode bayar, cetak struk.', 'Fast POS, multiple payment methods, printed receipts.') },
-    { Icon: Pill, title: t('Produk & Stok', 'Products & Stock'), d: t('Katalog obat, harga, margin, batch & expired.', 'Drug catalog, prices, margins, batches & expiry.') },
+    { Icon: TrendingUp, title: t('Dashboard Analitik', 'Analytics Dashboard'), d: t('Grafik penjualan, produk terlaris, stok minim & jatuh tempo.', 'Sales chart, best sellers, low stock & due invoices.') },
+    { Icon: ShoppingCart, title: t('Kasir & Struk', 'POS & Receipts'), d: t('POS cepat, multi metode bayar, penjualan resep.', 'Fast POS, multiple payment methods, prescription sales.') },
+    { Icon: Pill, title: t('Produk & Stok', 'Products & Stock'), d: t('Katalog, harga, margin, batch, expired + filter kolom.', 'Catalog, prices, margins, batches, expiry + column filters.') },
+    { Icon: Wand2, title: t('Order Terpandu', 'Guided Order'), d: t('Restok otomatis, PO terpecah per distributor.', 'Auto-restock, POs split per distributor.') },
     { Icon: Truck, title: t('Supplier & PO', 'Suppliers & PO'), d: t('Kelola supplier dan purchase order.', 'Manage suppliers and purchase orders.') },
     { Icon: Receipt, title: t('Pembayaran Faktur', 'Invoice Payments'), d: t('Hutang supplier, jatuh tempo, bukti bayar.', 'Supplier debts, due dates, payment receipts.') },
     { Icon: ClipboardList, title: t('Tindak Lanjut Expired', 'Expired Follow-up'), d: t('Musnahkan (Berita Acara) & retur supplier.', 'Destruction (official report) & supplier returns.') },
-    { Icon: BarChart2, title: t('Laporan & SIPNAP', 'Reports & SIPNAP'), d: t('Penjualan, omzet, dan laporan wajib.', 'Sales, revenue, and mandatory reports.') },
+    { Icon: BarChart2, title: t('Laporan & SIPNAP', 'Reports & SIPNAP'), d: t('Penjualan, rekap metode bayar & laporan wajib.', 'Sales, payment-method recap & mandatory reports.') },
     { Icon: Users, title: t('Pengguna & Role', 'Users & Roles'), d: t('Akun tim dengan hak akses per modul.', 'Team accounts with per-module access.') },
     { Icon: ShieldCheck, title: t('Data Aman & Terpisah', 'Secure & Isolated Data'), d: t('Tiap apotek terisolasi di level database.', 'Each pharmacy isolated at the database level.') },
+    { Icon: Languages, title: t('Dwibahasa ID / EN', 'Bilingual ID / EN'), d: t('Ganti bahasa seluruh aplikasi seketika.', 'Switch the entire app language instantly.') },
     { Icon: Database, title: t('Migrasi & Backup', 'Migration & Backup'), d: t('Import/ekspor CSV kapan saja.', 'Import/export CSV anytime.') },
   ]
 
@@ -118,21 +295,14 @@ export default function Kenapa() {
           {t('Apotek Anda,', 'Your pharmacy,')}<br />{t('dikelola dengan tenang.', 'managed with ease.')}
         </h1>
         <p className="reveal text-lg sm:text-xl text-[#4b5563] max-w-2xl mx-auto mb-9" style={{ transitionDelay: '.1s' }}>
-          {t('Kasir, stok, pembelian, kepatuhan SIPNAP, hingga barang expired — semuanya dalam satu aplikasi yang dirancang khusus untuk apotek Indonesia.', 'POS, stock, purchasing, SIPNAP compliance, and expired goods — all in one app built specifically for Indonesian pharmacies.')}
+          {t('Dashboard analitik real-time, kasir, stok, order terpandu, kepatuhan SIPNAP — semuanya dalam satu aplikasi yang dirancang khusus untuk apotek Indonesia.', 'A real-time analytics dashboard, POS, stock, guided ordering, and SIPNAP compliance — all in one app built specifically for Indonesian pharmacies.')}
         </p>
         <div className="reveal flex items-center justify-center gap-3 mb-14" style={{ transitionDelay: '.15s' }}>
           <a href="/" className="inline-flex items-center gap-2 bg-[#1e3a2c] text-white px-6 py-3 rounded-xl font-semibold hover:bg-[#24462f] transition">{t('Coba Sekarang', 'Try Now')} <ArrowRight size={17} /></a>
           <a href="#harga" className="px-6 py-3 rounded-xl font-semibold border border-[#d1cdc4] hover:bg-white/60 transition">{t('Lihat Harga', 'See Pricing')}</a>
         </div>
-        <div className="reveal max-w-3xl mx-auto" style={{ transitionDelay: '.2s' }}>
-          <AppWindow>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <Stat chip="bg-[#dce5db] text-[#2f5741]" Icon={Pill} label={t('Produk', 'Products')} value="1.240" />
-              <Stat chip="bg-[#dce5db] text-[#2f5741]" Icon={ShoppingCart} label={t('Transaksi', 'Sales')} value="87" />
-              <Stat chip="bg-[#f5e6c8] text-[#8a6d1f]" Icon={CalendarClock} label={t('Expired ≤60h', 'Expiring ≤60d')} value="3" />
-              <Stat chip="bg-[#f0dcd2] text-[#a75a34]" Icon={Wallet} label={t('Omzet', 'Revenue')} value="Rp8,4jt" />
-            </div>
-          </AppWindow>
+        <div className="reveal px-2 sm:px-8 pb-16" style={{ transitionDelay: '.2s' }}>
+          <DeviceShowcase t={t} />
         </div>
       </header>
 
@@ -207,7 +377,7 @@ export default function Kenapa() {
             </div>
           </div>
           <div className="reveal mt-8 space-y-2 text-left max-w-md mx-auto" style={{ transitionDelay: '.2s' }}>
-            {[t('Semua fitur — tanpa batasan', 'All features — no limits'), t('Multi-pengguna dengan hak akses', 'Multi-user with role-based access'), t('Migrasi data & pendampingan awal', 'Data migration & onboarding support'), t('Update fitur berkelanjutan', 'Continuous feature updates')].map((f, i) => (
+            {[t('Semua fitur — tanpa batasan', 'All features — no limits'), t('Dashboard analitik & laporan real-time', 'Real-time analytics dashboard & reports'), t('Order terpandu & dwibahasa ID/EN', 'Guided ordering & bilingual ID/EN'), t('Multi-pengguna dengan hak akses', 'Multi-user with role-based access'), t('Migrasi data & pendampingan awal', 'Data migration & onboarding support'), t('Update fitur berkelanjutan', 'Continuous feature updates')].map((f, i) => (
               <div key={i} className="flex items-center gap-2.5 text-[#e8efe9]"><Check size={16} className="text-[#8fbf7f] shrink-0" /> <span className="text-sm">{f}</span></div>
             ))}
           </div>
