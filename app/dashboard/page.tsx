@@ -5,7 +5,8 @@ import {
   LayoutDashboard, Pill, ShoppingCart, PackageOpen, BarChart2, LogOut, Settings, Truck,
   FlaskConical, Wallet, CalendarClock, ClipboardList, Printer, Pencil,
   Receipt, CreditCard, Building2, Users, PanelLeftClose, PanelLeft, ChevronRight,
-  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X, Download, Database, HeartPulse
+  UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X, Download, Database, HeartPulse,
+  Search, Wand2, AlertTriangle
 } from 'lucide-react'
 import { supabase, createSignupClient } from '../../lib/supabase'
 import { AMBIENT } from '../../lib/theme'
@@ -33,6 +34,30 @@ const ROLE_PAGES: Record<string, string[]> = {
   kasir:            ['dashboard','transaksi','layanan'],
 }
 const ROLE_LABELS: Record<string,string> = { pemilik:'Pemilik', apoteker:'Apoteker', asisten_apoteker:'Asisten Apoteker', kasir:'Kasir', admin:'Admin', superadmin:'Super Admin' }
+
+// ── Gaya tabel seragam (profesional) ──
+const TBL_WRAP = 'bg-white/80 backdrop-blur-sm border border-[#e8e4d9] rounded-2xl shadow-sm overflow-x-auto'
+const TBL = 'w-full text-sm border-collapse'
+const THEAD = 'bg-[#f6f4ee] border-b border-[#e6e2d8]'
+const TH = 'px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-[#8a9691] whitespace-nowrap'
+const TH_L = TH + ' text-left'
+const TH_R = TH + ' text-right'
+const TH_C = TH + ' text-center'
+const TR = 'border-b border-[#f2efe8] last:border-0 hover:bg-[#faf9f5] transition-colors'
+const TD = 'px-4 py-2.5 align-middle'
+
+// Badge warna per kategori obat
+const KATEGORI_BADGE: Record<string, string> = {
+  bebas: 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20',
+  bebas_terbatas: 'bg-blue-50 text-blue-700 ring-1 ring-blue-600/20',
+  keras: 'bg-red-50 text-red-700 ring-1 ring-red-600/20',
+  psikotropika: 'bg-purple-50 text-purple-700 ring-1 ring-purple-600/20',
+  narkotika: 'bg-rose-100 text-rose-800 ring-1 ring-rose-700/20',
+  prekursor: 'bg-orange-50 text-orange-700 ring-1 ring-orange-600/20',
+  suplemen: 'bg-teal-50 text-teal-700 ring-1 ring-teal-600/20',
+  alkes: 'bg-slate-100 text-slate-700 ring-1 ring-slate-500/20',
+  lainnya: 'bg-gray-100 text-gray-600 ring-1 ring-gray-400/20',
+}
 
 export default function Dashboard() {
   const { t, lang } = useLang()
@@ -83,6 +108,7 @@ export default function Dashboard() {
   })
   const [editProduk, setEditProduk] = useState<any>(null)
   const [produkSuppliers, setProdukSuppliers] = useState<any[]>([])
+  const [supplierSearch, setSupplierSearch] = useState('')
   const [expiredAlerts, setExpiredAlerts] = useState<any[]>([])
   const [showProdukDetail, setShowProdukDetail] = useState<any>(null)
   const [produkDetailTab, setProdukDetailTab] = useState('info')
@@ -218,6 +244,11 @@ export default function Dashboard() {
   const [showPenerimaan, setShowPenerimaan] = useState<any>(null)
   const [penerimaanItems, setPenerimaanItems] = useState<any[]>([])
   const [showPODetail, setShowPODetail] = useState<any>(null)
+  // Guided order (order terpandu) states
+  const [guidedOpen, setGuidedOpen] = useState(false)
+  const [guidedStep, setGuidedStep] = useState(1)
+  const [guidedItems, setGuidedItems] = useState<any[]>([])
+  const [guidedLoading, setGuidedLoading] = useState(false)
   const [showTrxDetail, setShowTrxDetail] = useState<any>(null)
   const [trxDetailItems, setTrxDetailItems] = useState<any[]>([])
 
@@ -355,14 +386,64 @@ export default function Dashboard() {
   }
 
   const submitPO = async () => {
+    if (superLocked()) return alert(t('⚠️ Pilih satu apotek di dropdown "Lihat sebagai apotek" dulu sebelum membuat PO.', '⚠️ Select a specific pharmacy in the "View as pharmacy" dropdown before creating a PO.'))
     if (!selectedSupplier || poItems.length === 0) return alert(t('Pilih supplier dan tambah produk dulu!', 'Select a supplier and add products first!'))
     const total_nilai = poItems.reduce((a, b) => a + b.subtotal, 0)
-    const { data: po, error } = await supabase.from('purchase_orders').insert([{ supplier_id: selectedSupplier.id, total_nilai, catatan: poCatatan }]).select().single()
+    const cid = (isSuper && superViewCompany) ? { company_id: superViewCompany } : {}
+    const { data: po, error } = await supabase.from('purchase_orders').insert([{ supplier_id: selectedSupplier.id, total_nilai, catatan: poCatatan, ...cid }]).select().single()
     if (error) { alert('Error: ' + error.message); return }
-    await supabase.from('po_items').insert(poItems.map(i => ({ ...i, po_id: po.id })))
+    await supabase.from('po_items').insert(poItems.map(i => ({ ...i, po_id: po.id, ...cid })))
     setShowPOForm(false); setSelectedSupplier(null); setPoItems([]); setPoCatatan(''); setSupplierProducts([])
     fetchPOList()
     alert(`✅ ${t('PO', 'PO')} ${po.nomor_po} ${t('berhasil dibuat!', 'created successfully!')}`)
+  }
+
+  // ── Order Terpandu (Guided Order) ──
+  const superLocked = () => isSuper && !superViewCompany
+  const startGuidedOrder = async () => {
+    if (superLocked()) return alert(t('⚠️ Pilih satu apotek di dropdown "Lihat sebagai apotek" dulu sebelum membuat order.', '⚠️ Select a specific pharmacy in the "View as pharmacy" dropdown before creating an order.'))
+    setGuidedLoading(true)
+    const { data: prods } = await scopeQ(supabase.from('products').select('id,nama_obat,satuan,stok_total,stok_minimum,harga_beli').order('nama_obat'))
+    const low = (prods || []).filter((p: any) => (p.stok_total ?? 0) <= (p.stok_minimum ?? 0))
+    if (low.length === 0) { setGuidedLoading(false); alert(t('Tidak ada barang yang mencapai stok minimum. 👍', 'No items have reached minimum stock. 👍')); return }
+    const ids = low.map((p: any) => p.id)
+    const { data: ps } = await scopeQ(supabase.from('product_suppliers').select('product_id, suppliers(id, nama_supplier, jenis)').in('product_id', ids))
+    const byProd: Record<string, any[]> = {}
+    ;(ps || []).forEach((r: any) => { if (r.suppliers) { (byProd[r.product_id] = byProd[r.product_id] || []).push(r.suppliers) } })
+    setGuidedItems(low.map((p: any) => {
+      const sup = byProd[p.id] || []
+      const target = Math.max(1, (p.stok_minimum || 0) * 2 - (p.stok_total || 0)) // restok ke ~2× stok minimum
+      return { product_id: p.id, nama: p.nama_obat, satuan: p.satuan, stok_total: p.stok_total ?? 0, stok_minimum: p.stok_minimum ?? 0, harga_beli: p.harga_beli || 0, qty: target, suppliers: sup, supplier_id: sup[0]?.id || '' }
+    }))
+    setGuidedStep(1); setGuidedOpen(true); setGuidedLoading(false)
+  }
+
+  const closeGuided = () => { setGuidedOpen(false); setGuidedStep(1); setGuidedItems([]) }
+  const updateGuided = (pid: string, field: string, value: any) =>
+    setGuidedItems(prev => prev.map(i => i.product_id === pid ? { ...i, [field]: value } : i))
+  const supName = (id: string) => suppliers.find((s: any) => s.id === id)?.nama_supplier || '-'
+
+  const submitGuided = async () => {
+    const valid = guidedItems.filter(i => i.supplier_id && i.qty > 0)
+    if (valid.length === 0) { alert(t('Tidak ada item dengan supplier & qty yang valid.', 'No items with a valid supplier & qty.')); return }
+    setGuidedLoading(true)
+    const groups: Record<string, any[]> = {}
+    valid.forEach(i => { (groups[i.supplier_id] = groups[i.supplier_id] || []).push(i) })
+    const created: string[] = []
+    const cid = (isSuper && superViewCompany) ? { company_id: superViewCompany } : {}
+    try {
+      for (const sid of Object.keys(groups)) {
+        const items = groups[sid]
+        const total_nilai = items.reduce((a, b) => a + b.qty * b.harga_beli, 0)
+        const { data: po, error } = await supabase.from('purchase_orders').insert([{ supplier_id: sid, total_nilai, catatan: t('Order terpandu — restok otomatis', 'Guided order — auto restock'), ...cid }]).select().single()
+        if (error) { alert('Error: ' + error.message); setGuidedLoading(false); return }
+        await supabase.from('po_items').insert(items.map(i => ({ po_id: po.id, product_id: i.product_id, nama_produk: i.nama, satuan: i.satuan, qty_pesan: i.qty, harga_beli: i.harga_beli, subtotal: i.qty * i.harga_beli, ...cid })))
+        created.push(po.nomor_po)
+      }
+      closeGuided(); fetchPOList()
+      alert(`✅ ${created.length} ${t('PO berhasil dibuat & siap kirim', 'POs created & ready to send')}: ${created.join(', ')}`)
+    } catch (e) { alert(t('Terjadi kesalahan, coba lagi.', 'An error occurred, please try again.')) }
+    finally { setGuidedLoading(false) }
   }
 
   const openPenerimaan = async (po: any) => {
@@ -867,20 +948,22 @@ export default function Dashboard() {
     const days: Date[] = []
     for (let i = 0; i < span; i++) { const d = new Date(start); d.setDate(start.getDate() + i); days.push(d) }
     const { data: trx } = await scopeQ(supabase.from('transactions').select('total,created_at,status').gte('created_at', start.toISOString()))
-    // Bucket transaksi berdasarkan tanggal LOKAL
-    const bucket: Record<string, number> = {}
+    // Bucket transaksi berdasarkan tanggal LOKAL: total omzet + jumlah transaksi
+    const bucket: Record<string, { value: number; count: number }> = {}
     ;(trx || []).forEach((x: any) => {
       if (x.status === 'dibatalkan' || !x.created_at) return
       const k = localKey(new Date(x.created_at))
-      bucket[k] = (bucket[k] || 0) + (x.total || 0)
+      if (!bucket[k]) bucket[k] = { value: 0, count: 0 }
+      bucket[k].value += (x.total || 0)
+      bucket[k].count += 1
     })
     setSalesChart(days.map((d, i) => {
-      const value = bucket[localKey(d)] || 0
+      const b = bucket[localKey(d)] || { value: 0, count: 0 }
       // 7 hari: tampilkan nama hari. 30 hari: tampilkan tgl tiap ~5 titik
       const label = span === 7
         ? d.toLocaleDateString(lang === 'en' ? 'en-US' : 'id-ID', { weekday: 'short' })
         : (i % 5 === 0 || i === span - 1) ? d.toLocaleDateString(lang === 'en' ? 'en-US' : 'id-ID', { day: 'numeric', month: 'short' }) : ''
-      return { label, day: d.getDate(), value }
+      return { label, day: d.getDate(), value: b.value, count: b.count }
     }))
   }
 
@@ -933,6 +1016,7 @@ export default function Dashboard() {
   const openProdukDetail = async (produk: any) => {
     setShowProdukDetail(produk)
     setProdukDetailTab('info')
+    fetchProdukSuppliers(produk.id)
 
     // Fetch batches
     const { data: batches } = await supabase
@@ -1512,6 +1596,24 @@ const batalRetur = async (row: any) => {
                     <p className="text-xs text-[#6b7280] mb-0.5">Kandungan / Komposisi</p>
                     <p className="font-medium text-[#1e3a2c] text-sm">{showProdukDetail.kandungan || '-'}</p>
                   </div>
+                  <div className="col-span-2 bg-[#f5f2eb] rounded-lg p-3">
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Truck size={13} className="text-[#2f5741]" />
+                      <p className="text-xs text-[#6b7280]">{t('Bisa dipesan di', 'Can be ordered from')}</p>
+                    </div>
+                    {produkSuppliers.length === 0 ? (
+                      <p className="text-xs text-[#9ca3af] italic">{t('Belum ada supplier — atur lewat tombol Edit.', 'No supplier set — assign via Edit.')}</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {produkSuppliers.map((ps: any) => (
+                          <span key={ps.id} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-[#d8d2c4] text-xs font-medium text-[#1e3a2c]">
+                            {ps.suppliers?.nama_supplier || '-'}
+                            {ps.suppliers?.jenis && <span className="text-[#9ca3af] font-normal">· {ps.suppliers.jenis}</span>}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 )
               })()}
@@ -1596,7 +1698,7 @@ const batalRetur = async (row: any) => {
                       </thead>
                       <tbody>
                         {produkTrxOut.map((t: any, i: number) => (
-                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                          <tr key={i} className={TR}>
                             <td className="px-3 py-2 font-mono text-xs text-[#1e3a2c]">{t.transactions?.nomor_transaksi}</td>
                             <td className="px-3 py-2 text-xs text-[#6b7280]">
                               {t.transactions?.created_at ? new Date(t.transactions.created_at).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}
@@ -1649,7 +1751,7 @@ const batalRetur = async (row: any) => {
                       </thead>
                       <tbody>
                         {produkTrxIn.map((t: any, i: number) => (
-                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                          <tr key={i} className={TR}>
                             <td className="px-3 py-2 font-mono text-xs text-[#1e3a2c]">{t.purchase_orders?.nomor_po}</td>
                             <td className="px-3 py-2 text-xs text-[#6b7280]">{t.purchase_orders?.suppliers?.nama_supplier}</td>
                             <td className="px-3 py-2 text-xs text-[#6b7280]">
@@ -1729,12 +1831,22 @@ const batalRetur = async (row: any) => {
 
               {/* Assign Supplier */}
               <div className="border-t border-[#f0ede6] pt-3">
-                <label className="text-xs font-medium text-[#6b7280] mb-2 block">Supplier Produk Ini</label>
+                <label className="text-xs font-medium text-[#6b7280] mb-2 block">{t('Supplier Produk Ini', 'Suppliers for this Product')} <span className="text-[#9ca3af]">({produkSuppliers.length} {t('dipilih', 'selected')})</span></label>
                 {suppliers.length === 0 ? (
                   <p className="text-xs text-[#9ca3af]">Belum ada supplier — tambah di menu Supplier dulu</p>
                 ) : (
+                  <>
+                  <div className="relative mb-2">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#9ca3af]" />
+                    <input value={supplierSearch} onChange={e => setSupplierSearch(e.target.value)}
+                      placeholder={t('Cari supplier...', 'Search supplier...')}
+                      className="w-full border border-[#d1cdc4] rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
+                  </div>
                   <div className="space-y-2 max-h-40 overflow-y-auto">
-                    {suppliers.map(s => {
+                    {suppliers.filter(s => {
+                      const q = supplierSearch.trim().toLowerCase()
+                      return !q || `${s.nama_supplier} ${s.kode} ${s.jenis}`.toLowerCase().includes(q)
+                    }).map(s => {
                       const isActive = produkSuppliers.some(ps => ps.supplier_id === s.id)
                       return (
                         <div key={s.id} onClick={() => toggleSupplierProduk(editProduk.id, s.id, isActive)}
@@ -1754,11 +1866,12 @@ const batalRetur = async (row: any) => {
                       )
                     })}
                   </div>
+                  </>
                 )}
               </div>
             </div>
             <div className="flex gap-3 mt-5">
-              <button onClick={() => { setEditProduk(null); setProdukSuppliers([]) }}
+              <button onClick={() => { setEditProduk(null); setProdukSuppliers([]); setSupplierSearch('') }}
                 className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm">Batal</button>
               <button onClick={async () => {
                 const { error } = await supabase.from('products').update({
@@ -1767,7 +1880,7 @@ const batalRetur = async (row: any) => {
                   harga_jual: editProduk.harga_jual, stok_total: editProduk.stok_total,
                   stok_minimum: editProduk.stok_minimum,
                 }).eq('id', editProduk.id)
-                if (!error) { setEditProduk(null); setProdukSuppliers([]); fetchProducts() }
+                if (!error) { setEditProduk(null); setProdukSuppliers([]); setSupplierSearch(''); fetchProducts() }
               }} className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium">
                 Simpan Perubahan
               </button>
@@ -1820,7 +1933,7 @@ const batalRetur = async (row: any) => {
               </thead>
               <tbody>
                 {trxDetailItems.map((item, i) => (
-                  <tr key={i} className="border-b border-[#f0ede6]">
+                  <tr key={i} className={TR}>
                     <td className="px-3 py-2 font-medium text-[#1e3a2c]">{item.nama_obat}</td>
                     <td className="px-3 py-2 text-center text-[#6b7280]">{item.jumlah}</td>
                     <td className="px-3 py-2 text-right text-[#6b7280]">Rp {item.harga_jual?.toLocaleString('id-ID')}</td>
@@ -1901,7 +2014,7 @@ const batalRetur = async (row: any) => {
         </thead>
         <tbody>
           {showPODetail.items?.map((item: any, i: number) => (
-            <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+            <tr key={i} className={TR}>
               <td className="px-3 py-2 font-medium text-[#1e3a2c]">{item.nama_produk}</td>
               <td className="px-3 py-2 text-center text-[#6b7280]">{item.qty_pesan} {item.satuan}</td>
               <td className="px-3 py-2 text-center">
@@ -2456,7 +2569,10 @@ const batalRetur = async (row: any) => {
                   <div className="flex items-start justify-between mb-4 gap-3">
                     <div>
                       <h3 className="font-bold text-[#1c2620]">{chartRange === '7d' ? t('Penjualan 7 Hari Terakhir', 'Sales — Last 7 Days') : t('Penjualan 30 Hari Terakhir', 'Sales — Last 30 Days')}</h3>
-                      <p className="text-xs text-[#9ca3af]">{t('Total omzet per hari', 'Daily revenue')}</p>
+                      <div className="flex items-center gap-3 mt-1">
+                        <span className="flex items-center gap-1.5 text-xs text-[#6b7280]"><span className="inline-block w-2.5 h-2.5 rounded-sm bg-[#2f5741]" />{t('Omzet', 'Revenue')}</span>
+                        <span className="flex items-center gap-1.5 text-xs text-[#6b7280]"><span className="inline-block w-4 h-0.5 rounded bg-[#c2632f]" />{t('Transaksi', 'Transactions')}</span>
+                      </div>
                     </div>
                     <div className="flex flex-col items-end gap-2">
                       <p className="text-lg font-bold text-[#1e3a2c] leading-none">Rp {salesChart.reduce((a, b) => a + (b.value || 0), 0).toLocaleString('id-ID')}</p>
@@ -2472,31 +2588,76 @@ const batalRetur = async (row: any) => {
                   </div>
                   {(() => {
                     const fallbackN = chartRange === '30d' ? 30 : 7
-                    const data = salesChart.length ? salesChart : Array.from({ length: fallbackN }, () => ({ label: '', day: '', value: 0 }))
-                    const max = Math.max(...data.map((d: any) => d.value), 1)
+                    const data = salesChart.length ? salesChart : Array.from({ length: fallbackN }, () => ({ label: '', day: '', value: 0, count: 0 }))
                     const n = data.length
                     const dense = n > 10
-                    const X = (i: number) => 14 + (i / (n - 1)) * 292
-                    const Y = (v: number) => 104 - (v / max) * 82
-                    const line = data.map((d: any, i: number) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(d.value).toFixed(1)}`).join(' ')
-                    const area = `${line} L${X(n - 1).toFixed(1)},112 L${X(0).toFixed(1)},112 Z`
-                    // Panjang garis untuk animasi "draw"
-                    const pathLen = 320
+                    const maxVal = Math.max(...data.map((d: any) => d.value), 1)
+                    const maxCnt = Math.max(...data.map((d: any) => d.count), 1)
+                    // Geometri (viewBox 340×150)
+                    const W = 340, H = 150, PL = 34, PR = 24, PT = 16, PB = 24
+                    const plotW = W - PL - PR, plotH = H - PT - PB, baseY = PT + plotH
+                    const slot = plotW / n
+                    const cx = (i: number) => PL + slot * i + slot / 2
+                    const barW = Math.max(3, slot * (dense ? 0.62 : 0.5))
+                    const lineY = (c: number) => baseY - (c / maxCnt) * plotH
+                    // Kurva halus (Catmull-Rom → Bézier) agar garis tampak elegan
+                    const pts = data.map((d: any, i: number) => ({ x: cx(i), y: lineY(d.count) }))
+                    const smooth = (p: { x: number; y: number }[]) => {
+                      if (p.length < 2) return p.length ? `M${p[0].x},${p[0].y}` : ''
+                      let dPath = `M${p[0].x.toFixed(1)},${p[0].y.toFixed(1)}`
+                      for (let i = 0; i < p.length - 1; i++) {
+                        const p0 = p[i - 1] || p[i], p1 = p[i], p2 = p[i + 1], p3 = p[i + 2] || p2
+                        const c1x = p1.x + (p2.x - p0.x) / 6, c1y = p1.y + (p2.y - p0.y) / 6
+                        const c2x = p2.x - (p3.x - p1.x) / 6, c2y = p2.y - (p3.y - p1.y) / 6
+                        dPath += ` C${c1x.toFixed(1)},${c1y.toFixed(1)} ${c2x.toFixed(1)},${c2y.toFixed(1)} ${p2.x.toFixed(1)},${p2.y.toFixed(1)}`
+                      }
+                      return dPath
+                    }
+                    const linePath = smooth(pts)
+                    const lineLen = 900
+                    const fmtRp = (v: number) => v >= 1e6 ? `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}jt` : v >= 1e3 ? `${Math.round(v / 1e3)}rb` : `${v}`
                     return (
                       <div>
-                        <svg key={chartRange} viewBox="0 0 320 130" className="w-full h-40 sw-chart">
+                        <svg key={chartRange} viewBox={`0 0 ${W} ${H}`} className="w-full h-48 sw-chart">
                           <defs>
-                            <linearGradient id="salesFill" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#1e3a2c" stopOpacity="0.22" />
-                              <stop offset="100%" stopColor="#1e3a2c" stopOpacity="0" />
+                            <linearGradient id="salesBar" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#3a6b50" />
+                              <stop offset="100%" stopColor="#1e3a2c" />
                             </linearGradient>
                           </defs>
-                          {[0, 0.5, 1].map((g, i) => <line key={i} x1="14" x2="306" y1={104 - g * 82} y2={104 - g * 82} stroke="#eceae3" strokeWidth="1" />)}
-                          <path className="sw-chart-area" d={area} fill="url(#salesFill)" />
-                          <path className="sw-chart-line" d={line} fill="none" stroke="#1e3a2c" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"
-                            style={{ strokeDasharray: pathLen, strokeDashoffset: pathLen }} />
-                          {!dense && data.map((d: any, i: number) => <circle className="sw-chart-dot" key={i} cx={X(i)} cy={Y(d.value)} r="3" fill="#1e3a2c" style={{ animationDelay: `${0.5 + i * 0.05}s` }} />)}
-                          {data.map((d: any, i: number) => d.label ? <text key={'t' + i} x={X(i)} y="124" textAnchor="middle" fontSize="9" fill="#9ca3af">{d.label}</text> : null)}
+                          {/* grid + label sumbu omzet (kiri) */}
+                          {[0, 0.5, 1].map((g, i) => {
+                            const y = baseY - g * plotH
+                            return (
+                              <g key={i}>
+                                <line x1={PL} x2={W - PR} y1={y} y2={y} stroke="#eceae3" strokeWidth="1" />
+                                <text x={PL - 5} y={y + 3} textAnchor="end" fontSize="7.5" fill="#b8bcb4">{fmtRp(maxVal * g)}</text>
+                              </g>
+                            )
+                          })}
+                          {/* label sumbu transaksi (kanan) */}
+                          {[0, 1].map((g, i) => (
+                            <text key={'r' + i} x={W - PR + 5} y={baseY - g * plotH + 3} textAnchor="start" fontSize="7.5" fill="#d3a488">{Math.round(maxCnt * g)}</text>
+                          ))}
+                          {/* batang omzet */}
+                          {data.map((d: any, i: number) => {
+                            const h = (d.value / maxVal) * plotH
+                            return (
+                              <rect className="sw-bar" key={'b' + i} x={cx(i) - barW / 2} y={baseY - h} width={barW} height={Math.max(0, h)}
+                                rx={Math.min(3, barW / 2)} fill="url(#salesBar)" style={{ transformOrigin: `center ${baseY}px`, animationDelay: `${i * 0.04}s` }} />
+                            )
+                          })}
+                          {/* garis jumlah transaksi */}
+                          <path className="sw-chart-line" d={linePath} fill="none" stroke="#c2632f" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                            style={{ strokeDasharray: lineLen, strokeDashoffset: lineLen }} />
+                          {!dense && data.map((d: any, i: number) => (
+                            <g key={'p' + i}>
+                              <circle className="sw-chart-dot" cx={cx(i)} cy={lineY(d.count)} r="3" fill="#fff" stroke="#c2632f" strokeWidth="2" style={{ animationDelay: `${0.6 + i * 0.06}s` }} />
+                              {d.count > 0 && <text className="sw-chart-dot" x={cx(i)} y={lineY(d.count) - 7} textAnchor="middle" fontSize="8" fontWeight="700" fill="#c2632f" style={{ animationDelay: `${0.7 + i * 0.06}s` }}>{d.count}</text>}
+                            </g>
+                          ))}
+                          {/* label hari/tanggal */}
+                          {data.map((d: any, i: number) => d.label ? <text key={'t' + i} x={cx(i)} y={H - 7} textAnchor="middle" fontSize="8.5" fill="#9ca3af">{d.label}</text> : null)}
                         </svg>
                       </div>
                     )
@@ -2621,7 +2782,7 @@ const batalRetur = async (row: any) => {
                       </thead>
                       <tbody>
                         {riwayatMusnah.map((r: any, i: number) => (
-                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                          <tr key={i} className={TR}>
                             <td className="px-4 py-3 font-mono text-xs text-[#1c2620]">{r.nomor_ba || '-'}</td>
                             <td className="px-4 py-3 text-xs text-[#6b7280]">{r.tanggal_musnahkan ? new Date(r.tanggal_musnahkan).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</td>
                             <td className="px-4 py-3 text-[#1c2620] font-medium">{r.products?.nama_obat || '-'}</td>
@@ -2665,7 +2826,7 @@ const batalRetur = async (row: any) => {
                       </thead>
                       <tbody>
                         {riwayatRetur.map((r: any, i: number) => (
-                          <tr key={i} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                          <tr key={i} className={TR}>
                             <td className="px-4 py-3 font-mono text-xs text-[#1c2620]">{r.nomor_retur || '-'}</td>
                             <td className="px-4 py-3 text-xs text-[#6b7280]">{r.tanggal_retur ? new Date(r.tanggal_retur).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'}) : '-'}</td>
                             <td className="px-4 py-3 text-[#1c2620] font-medium">{r.products?.nama_obat || '-'}</td>
@@ -2762,7 +2923,7 @@ const batalRetur = async (row: any) => {
                         const overdue = jt && jt < today && f.status !== 'lunas'
                         const dueSoon = jt && !overdue && f.status !== 'lunas' && (jt.getTime() - today.getTime()) / 86400000 <= 7
                         return (
-                          <tr key={i} className={`border-b border-[#f0ede6] hover:bg-[#faf9f6] ${overdue ? 'bg-red-50/60' : ''}`}>
+                          <tr key={i} className={`${TR} ${overdue ? 'bg-red-50/60' : ''}`}>
                             <td className="px-4 py-3 font-mono text-xs text-[#1c2620]">{f.nomor_faktur || '-'}</td>
                             <td className="px-4 py-3 text-[#1c2620]">{f.suppliers?.nama_supplier || '-'}</td>
                             <td className="px-4 py-3 font-mono text-xs text-[#6b7280]">{f.purchase_orders?.nomor_po || '-'}</td>
@@ -2951,58 +3112,67 @@ const batalRetur = async (row: any) => {
                   className="w-full border border-[#d1cdc4] bg-white rounded-lg px-4 py-2.5 text-sm text-[#1e3a2c] placeholder-[#9ca3af] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]" />
               </div>
 
-              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Kode', 'Code')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Nama Obat', 'Drug Name')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Kategori', 'Category')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Satuan', 'Unit')}</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('H. Jual', 'Sell Price')}</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Stok', 'Stock')}</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
-                      <th className="px-4 py-3"></th>
+              <div className={TBL_WRAP}>
+                <table className={TBL}>
+                  <thead className={THEAD}>
+                    <tr>
+                      <th className={TH_L}>{t('Kode', 'Code')}</th>
+                      <th className={TH_L}>{t('Nama Obat', 'Drug Name')}</th>
+                      <th className={TH_L}>{t('Kategori', 'Category')}</th>
+                      <th className={TH_L}>{t('Satuan', 'Unit')}</th>
+                      <th className={TH_R}>{t('H. Jual', 'Sell Price')}</th>
+                      <th className={TH_C}>{t('Stok', 'Stock')}</th>
+                      <th className={TH_C}>Status</th>
+                      <th className={TH_R}>{t('Aksi', 'Action')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td className="px-4 py-8 text-center text-[#9ca3af]" colSpan={8}>{t('Memuat data...', 'Loading data...')}</td></tr>
+                      <tr><td className="px-4 py-10 text-center text-[#9ca3af]" colSpan={8}>{t('Memuat data...', 'Loading data...')}</td></tr>
                     ) : filteredProducts.length === 0 ? (
-                      <tr><td className="px-4 py-8 text-center text-[#9ca3af]" colSpan={8}>{t('Tidak ada produk ditemukan', 'No products found')}</td></tr>
+                      <tr><td className="px-4 py-10 text-center text-[#9ca3af]" colSpan={8}>{t('Tidak ada produk ditemukan', 'No products found')}</td></tr>
                     ) : (
-                      filteredProducts.map((p) => (
-                        <tr key={p.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
-                          <td className="px-4 py-3 text-[#6b7280] font-mono text-xs">{p.kode}</td>
-                          <td className="px-4 py-3">
-                            <div className="font-medium text-[#1e3a2c]">{p.nama_obat}</div>
-                            <div className="text-xs text-[#9ca3af]">{p.nama_generik}</div>
+                      filteredProducts.map((p) => {
+                        const habis = (p.stok_total ?? 0) <= 0
+                        const minim = !habis && (p.stok_total ?? 0) <= (p.stok_minimum ?? 0)
+                        const stokCls = habis ? 'bg-red-50 text-red-600 ring-1 ring-red-500/20' : minim ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-500/20' : 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500/20'
+                        return (
+                        <tr key={p.id} className={TR}>
+                          <td className={TD}><span className="font-mono text-xs text-[#8a9691]">{p.kode}</span></td>
+                          <td className={TD}>
+                            <div className="font-medium text-[#1c2620] leading-tight">{p.nama_obat}</div>
+                            {p.nama_generik && <div className="text-xs text-[#9ca3af] leading-tight mt-0.5">{p.nama_generik}</div>}
                           </td>
-                          <td className="px-4 py-3 text-[#6b7280]">{kategoriLabel[p.kategori] || p.kategori}</td>
-                          <td className="px-4 py-3 text-[#6b7280]">{p.satuan}</td>
-                          <td className="px-4 py-3 text-right text-[#1e3a2c]">Rp {p.harga_jual?.toLocaleString('id-ID')}</td>
-                          <td className={`px-4 py-3 text-right font-medium ${p.stok_total <= p.stok_minimum ? 'text-red-500' : 'text-[#1e3a2c]'}`}>
-                            {p.stok_total}
-                          </td>
-                          <td className="px-4 py-3 text-center">
-                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                              {p.status}
+                          <td className={TD}>
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium capitalize ${KATEGORI_BADGE[p.kategori] || KATEGORI_BADGE.lainnya}`}>
+                              {kategoriLabel[p.kategori] || p.kategori}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-center">
-                            <div className="flex items-center justify-center gap-2">
+                          <td className={TD + ' text-[#6b7280]'}>{p.satuan}</td>
+                          <td className={TD + ' text-right font-medium text-[#1c2620] tabular-nums whitespace-nowrap'}>Rp {p.harga_jual?.toLocaleString('id-ID')}</td>
+                          <td className={TD + ' text-center'}>
+                            <span className={`inline-block min-w-[2.25rem] px-2 py-0.5 rounded-full text-xs font-semibold tabular-nums ${stokCls}`}>{p.stok_total}</span>
+                          </td>
+                          <td className={TD + ' text-center'}>
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${p.status === 'aktif' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${p.status === 'aktif' ? 'bg-green-500' : 'bg-gray-400'}`} />
+                              {p.status === 'aktif' ? t('Aktif', 'Active') : t('Nonaktif', 'Inactive')}
+                            </span>
+                          </td>
+                          <td className={TD + ' text-right whitespace-nowrap'}>
+                            <div className="inline-flex items-center gap-1">
                               <button onClick={() => openProdukDetail(p)}
-                                className="text-xs text-blue-600 hover:underline font-medium">{t('Detail', 'Details')}</button>
-                              <span className="text-[#d1cdc4]">|</span>
+                                className="px-2.5 py-1 rounded-lg text-xs font-medium text-[#1e3a2c] hover:bg-[#eef0ea] transition">{t('Detail', 'Details')}</button>
                               <button onClick={() => {
                                 setEditProduk(p)
                                 fetchProdukSuppliers(p.id)
                                 if (suppliers.length === 0) fetchSuppliers()
-                              }} className="text-xs text-[#1e3a2c] hover:underline font-medium">Edit</button>
+                              }} className="px-2.5 py-1 rounded-lg text-xs font-medium text-white bg-[#1e3a2c] hover:bg-[#24462f] transition">Edit</button>
                             </div>
                           </td>
                         </tr>
-                      ))
+                        )
+                      })
                     )}
                   </tbody>
                 </table>
@@ -3019,6 +3189,15 @@ const batalRetur = async (row: any) => {
                   <p className="text-[#6b7280] text-sm">{t('Transaksi penjualan obat', 'Medicine sales transactions')}</p>
                 </div>
               </div>
+              {isSuper && !superViewCompany && (
+                <div className="mb-5 flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-800">
+                  <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-semibold">{t('Transaksi dikunci', 'Transactions locked')}</p>
+                    <p className="text-amber-700">{t('Dropdown "Lihat sebagai apotek" masih menampilkan semua apotek. Pilih satu apotek di sidebar agar transaksi tidak mempengaruhi stok apotek lain.', 'The "View as pharmacy" dropdown still shows all pharmacies. Pick a specific pharmacy in the sidebar so transactions don\'t affect other pharmacies\' stock.')}</p>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 lg:gap-6">
                 <div className="lg:col-span-3 space-y-4">
                   <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm p-4">
@@ -3029,8 +3208,12 @@ const batalRetur = async (row: any) => {
                       <div className="mt-3 space-y-1 max-h-64 overflow-y-auto">
                         {filteredProducts.map(p => (
                           <div key={p.id} onClick={() => {
+                            if ((p.stok_total ?? 0) <= 0) { alert(t(`Stok ${p.nama_obat} habis — tidak bisa dijual.`, `${p.nama_obat} is out of stock.`)); return }
                             const exists = keranjang.find(k => k.id === p.id)
-                            if (exists) { setKeranjang(keranjang.map(k => k.id === p.id ? {...k, jumlah: k.jumlah + 1} : k)) }
+                            if (exists) {
+                              if (exists.jumlah + 1 > (p.stok_total ?? 0)) { alert(t(`Stok ${p.nama_obat} hanya ${p.stok_total}.`, `Only ${p.stok_total} of ${p.nama_obat} in stock.`)); return }
+                              setKeranjang(keranjang.map(k => k.id === p.id ? {...k, jumlah: k.jumlah + 1} : k))
+                            }
                             else { setKeranjang([...keranjang, {...p, jumlah: 1}]) }
                             setSearch('')
                           }} className="flex items-center justify-between px-3 py-2 rounded-lg hover:bg-[#f5f2eb] cursor-pointer">
@@ -3059,14 +3242,14 @@ const batalRetur = async (row: any) => {
                       </div>
                     )}
                   </div>
-                  <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-[#f0ede6]">
-                          <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Produk', 'Product')}</th>
-                          <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Qty</th>
-                          <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Harga', 'Price')}</th>
-                          <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Subtotal</th>
+                  <div className={TBL_WRAP}>
+                    <table className={TBL}>
+                      <thead className={THEAD}>
+                        <tr>
+                          <th className={TH_L}>{t('Produk', 'Product')}</th>
+                          <th className={TH_C}>Qty</th>
+                          <th className={TH_R}>{t('Harga', 'Price')}</th>
+                          <th className={TH_R}>Subtotal</th>
                           <th className="px-4 py-3"></th>
                         </tr>
                       </thead>
@@ -3075,19 +3258,22 @@ const batalRetur = async (row: any) => {
                           <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada produk — cari obat di atas', 'No products yet — search above')}</td></tr>
                         ) : (
                           keranjang.map(item => (
-                            <tr key={item.id} className="border-b border-[#f0ede6]">
+                            <tr key={item.id} className={TR}>
                               <td className="px-4 py-3">
                                 <div className="font-medium text-[#1e3a2c]">{item.nama_obat}</div>
-                                <div className="text-xs text-[#9ca3af]">{item.kode}</div>
+                                <div className="text-xs text-[#9ca3af]">{item.is_jasa ? item.kode : `${item.kode || ''}${item.kode ? ' · ' : ''}${t('Stok', 'Stock')}: ${item.stok_total}`}</div>
                               </td>
                               <td className="px-4 py-3">
                                 <div className="flex items-center justify-center gap-2">
                                   <button onClick={() => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: Math.max(1, k.jumlah - 1)} : k))}
                                     className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1e3a2c] font-bold text-xs">−</button>
-                                  <input type="number" min={1} value={item.jumlah}
-                                    onChange={e => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: Math.max(1, +e.target.value)} : k))}
+                                  <input type="number" min={1} max={item.is_jasa ? undefined : item.stok_total} value={item.jumlah}
+                                    onChange={e => { const v = Math.max(1, +e.target.value); const capped = (!item.is_jasa && v > (item.stok_total ?? 0)) ? (item.stok_total ?? 0) : v; setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: capped} : k)) }}
                                     className="w-12 text-center text-sm border border-[#d1cdc4] rounded px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
-                                  <button onClick={() => setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: k.jumlah + 1} : k))}
+                                  <button onClick={() => {
+                                    if (!item.is_jasa && item.jumlah + 1 > (item.stok_total ?? 0)) { alert(t(`Stok ${item.nama_obat} hanya ${item.stok_total}.`, `Only ${item.stok_total} of ${item.nama_obat} in stock.`)); return }
+                                    setKeranjang(keranjang.map(k => k.id === item.id ? {...k, jumlah: k.jumlah + 1} : k))
+                                  }}
                                     className="w-6 h-6 rounded bg-[#f5f2eb] text-[#1e3a2c] font-bold text-xs">+</button>
                                 </div>
                               </td>
@@ -3155,9 +3341,12 @@ const batalRetur = async (row: any) => {
                         <span>Rp {Math.max(0, bayar - keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)).toLocaleString('id-ID')}</span>
                       </div>
                     )}
-                    <button disabled={prosesLoading} onClick={async () => {
+                    <button disabled={prosesLoading || (isSuper && !superViewCompany)} onClick={async () => {
                       if (prosesLoading) return
+                      if (isSuper && !superViewCompany) return alert(t('⚠️ Dropdown "Lihat sebagai apotek" masih menampilkan SEMUA apotek. Pilih satu apotek dulu sebelum transaksi agar tidak mempengaruhi stok apotek lain.', '⚠️ The "View as pharmacy" dropdown still shows ALL pharmacies. Select a specific pharmacy before making a transaction to avoid affecting other pharmacies\' stock.'))
                       if (keranjang.length === 0) return alert(t('Keranjang kosong!', 'Cart is empty!'))
+                      const over = keranjang.find(k => !k.is_jasa && k.jumlah > (k.stok_total ?? 0))
+                      if (over) return alert(t(`Stok ${over.nama_obat} tidak cukup — tersedia ${over.stok_total}, diminta ${over.jumlah}.`, `Insufficient stock for ${over.nama_obat} — available ${over.stok_total}, requested ${over.jumlah}.`))
                       const total = keranjang.reduce((a, b) => a + b.harga_jual * b.jumlah, 0)
                       if (bayar < total) return alert(t('Pembayaran kurang!', 'Insufficient payment!'))
                       const perluResep = keranjang.some(k => ['narkotika','psikotropika','prekursor'].includes(k.kategori))
@@ -3168,6 +3357,7 @@ const batalRetur = async (row: any) => {
                       setProsesLoading(true)
                       try {
                         const trxPayload: any = { total, bayar, kembalian, metode_bayar: metodeBayar }
+                        if (isSuper && superViewCompany) trxPayload.company_id = superViewCompany
                         if (perluResep) {
                           trxPayload.nama_pasien = pasienForm.nama_pasien.trim()
                           trxPayload.alamat_pasien = pasienForm.alamat_pasien.trim()
@@ -3176,11 +3366,11 @@ const batalRetur = async (row: any) => {
                         }
                         const { data: trx, error: trxError } = await supabase.from('transactions').insert([trxPayload]).select().single()
                         if (trxError) { alert('Error: ' + trxError.message); setProsesLoading(false); return }
-                        const items = keranjang.map(k => ({ transaction_id: trx.id, product_id: k.is_jasa ? null : k.id, nama_obat: k.nama_obat, harga_jual: k.harga_jual, jumlah: k.jumlah, subtotal: k.harga_jual * k.jumlah }))
+                        const items = keranjang.map(k => ({ transaction_id: trx.id, product_id: k.is_jasa ? null : k.id, nama_obat: k.nama_obat, harga_jual: k.harga_jual, jumlah: k.jumlah, subtotal: k.harga_jual * k.jumlah, ...(isSuper && superViewCompany ? { company_id: superViewCompany } : {}) }))
                         const { error: itemError } = await supabase.from('transaction_items').insert(items)
                         if (itemError) { alert('Error items: ' + itemError.message); setProsesLoading(false); return }
                         for (const k of keranjang) {
-                          if (!k.is_jasa) await supabase.from('products').update({ stok_total: k.stok_total - k.jumlah }).eq('id', k.id)
+                          if (!k.is_jasa) await supabase.from('products').update({ stok_total: Math.max(0, (k.stok_total ?? 0) - k.jumlah) }).eq('id', k.id)
                         }
                         setLastTrx({ ...trx, total, bayar, kembalian })
                         setLastItems(keranjang.map(k => ({ ...k, subtotal: k.harga_jual * k.jumlah })))
@@ -3192,7 +3382,7 @@ const batalRetur = async (row: any) => {
                       } catch(e) { alert(t('Terjadi kesalahan, coba lagi', 'An error occurred, please try again')) }
                       finally { setProsesLoading(false) }
                     }} className="w-full bg-[#1e3a2c] text-[#e8e4d9] py-3 rounded-lg text-sm font-medium hover:bg-[#24462f] transition disabled:opacity-50">
-                      {prosesLoading ? t('Memproses...', 'Processing...') : t('Proses Transaksi', 'Process Transaction')}
+                      {(isSuper && !superViewCompany) ? t('🔒 Pilih apotek dulu', '🔒 Select a pharmacy first') : prosesLoading ? t('Memproses...', 'Processing...') : t('Proses Transaksi', 'Process Transaction')}
                     </button>
                     <button onClick={() => { setKeranjang([]); setBayar(0); setMetodeBayar('Tunai'); setPasienForm({ nama_pasien: '', alamat_pasien: '', kontak_pasien: '', nomor_resep: '' }) }}
                       className="w-full mt-2 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50 transition">
@@ -3217,22 +3407,22 @@ const batalRetur = async (row: any) => {
                   + {t('Tambah Layanan', 'Add Service')}
                 </button>
               </div>
-              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Nama Layanan', 'Service Name')}</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Tarif', 'Fee')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Deskripsi', 'Description')}</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">{t('Aksi', 'Action')}</th>
+              <div className={TBL_WRAP}>
+                <table className={TBL}>
+                  <thead className={THEAD}>
+                    <tr>
+                      <th className={TH_L}>{t('Nama Layanan', 'Service Name')}</th>
+                      <th className={TH_R}>{t('Tarif', 'Fee')}</th>
+                      <th className={TH_L}>{t('Deskripsi', 'Description')}</th>
+                      <th className={TH_C}>Status</th>
+                      <th className={TH_C}>{t('Aksi', 'Action')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {services.length === 0 ? (
                       <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada layanan — tambah layanan pertama', 'No services yet — add your first service')}</td></tr>
                     ) : services.map((s: any) => (
-                      <tr key={s.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                      <tr key={s.id} className={TR}>
                         <td className="px-4 py-3 font-medium text-[#1c2620]">{s.nama}</td>
                         <td className="px-4 py-3 text-right text-[#1c2620]">Rp {(s.harga || 0).toLocaleString('id-ID')}</td>
                         <td className="px-4 py-3 text-[#6b7280] text-xs max-w-[280px] truncate">{s.deskripsi || '-'}</td>
@@ -3263,16 +3453,31 @@ const batalRetur = async (row: any) => {
                   <h1 className="text-2xl font-bold text-[#1e3a2c] mb-1">{t('Pembelian', 'Purchasing')}</h1>
                   <p className="text-[#6b7280] text-sm">{t('Purchase Order ke supplier', 'Purchase Orders to suppliers')}</p>
                 </div>
-                <button onClick={() => setShowPOForm(true)}
-                  className="bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition">
-                  + {t('Buat PO', 'Create PO')}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowPOForm(true)} disabled={isSuper && !superViewCompany}
+                    className="inline-flex items-center gap-1.5 border border-[#1e3a2c] text-[#1e3a2c] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#f5f2eb] transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    <Pencil size={15} /> {t('Order Manual', 'Manual Order')}
+                  </button>
+                  <button onClick={startGuidedOrder} disabled={guidedLoading || (isSuper && !superViewCompany)}
+                    className="inline-flex items-center gap-1.5 bg-[#1e3a2c] text-[#e8e4d9] px-4 py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] transition disabled:opacity-50 disabled:cursor-not-allowed">
+                    <Wand2 size={15} /> {(isSuper && !superViewCompany) ? t('🔒 Pilih apotek dulu', '🔒 Select a pharmacy first') : guidedLoading ? t('Memuat...', 'Loading...') : t('Order Terpandu', 'Guided Order')}
+                  </button>
+                </div>
               </div>
+              {isSuper && !superViewCompany && (
+                <div className="mb-5 flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-800">
+                  <AlertTriangle size={18} className="shrink-0 mt-0.5" />
+                  <div className="text-sm">
+                    <p className="font-semibold">{t('Pembuatan PO dikunci', 'PO creation locked')}</p>
+                    <p className="text-amber-700">{t('Dropdown "Lihat sebagai apotek" masih menampilkan semua apotek. Pilih satu apotek di sidebar agar PO tidak tercampur / mempengaruhi apotek lain.', 'The "View as pharmacy" dropdown still shows all pharmacies. Pick a specific pharmacy in the sidebar so POs are not mixed across pharmacies.')}</p>
+                  </div>
+                </div>
+              )}
 
               {showPOForm && (
                 <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
                   <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">Buat Purchase Order</h2>
+                    <h2 className="text-lg font-bold text-[#1e3a2c] mb-4">{t('Order Manual — Buat Purchase Order', 'Manual Order — Create Purchase Order')}</h2>
                     <div className="mb-4">
                       <label className="text-xs font-medium text-[#6b7280] mb-1 block">Pilih Supplier *</label>
                       <select onChange={async (e) => {
@@ -3364,16 +3569,185 @@ const batalRetur = async (row: any) => {
                 </div>
               )}
 
-              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('No. PO', 'PO No.')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">Supplier</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Tanggal', 'Date')}</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Total</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">{t('Aksi', 'Action')}</th>
+              {/* ── Order Terpandu (Guided Order) Wizard ── */}
+              {guidedOpen && (
+                <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white rounded-2xl w-full max-w-3xl shadow-xl max-h-[92vh] flex flex-col">
+                    {/* Header + step indicator */}
+                    <div className="px-6 pt-5 pb-4 border-b border-[#f0ede6]">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-bold text-[#1e3a2c] flex items-center gap-2"><Wand2 size={18} /> {t('Order Terpandu', 'Guided Order')}</h2>
+                        <button onClick={closeGuided} className="text-[#9ca3af] hover:text-[#1e3a2c]"><X size={20} /></button>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {[
+                          { n: 1, label: t('Pilih Barang', 'Select Items') },
+                          { n: 2, label: t('Bagi Distributor', 'Assign Distributors') },
+                          { n: 3, label: t('Review & Buat', 'Review & Create') },
+                        ].map((s, i) => (
+                          <div key={s.n} className="flex items-center gap-2 flex-1">
+                            <div className={`flex items-center gap-2 ${guidedStep >= s.n ? 'text-[#1e3a2c]' : 'text-[#c3bfb4]'}`}>
+                              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${guidedStep > s.n ? 'bg-[#2f5741] text-white' : guidedStep === s.n ? 'bg-[#1e3a2c] text-white' : 'bg-[#eceae3] text-[#9ca3af]'}`}>
+                                {guidedStep > s.n ? <Check size={13} /> : s.n}
+                              </div>
+                              <span className="text-xs font-medium hidden sm:block">{s.label}</span>
+                            </div>
+                            {i < 2 && <div className={`flex-1 h-0.5 rounded ${guidedStep > s.n ? 'bg-[#2f5741]' : 'bg-[#eceae3]'}`} />}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="px-6 py-4 overflow-y-auto flex-1">
+                      {/* STEP 1 — pilih barang */}
+                      {guidedStep === 1 && (
+                        <div>
+                          <p className="text-sm text-[#6b7280] mb-3">{t('Sistem mengumpulkan barang yang sudah mencapai stok minimum. Sesuaikan jumlah order bila perlu.', 'The system collected items that reached minimum stock. Adjust order quantities as needed.')}</p>
+                          {guidedItems.length === 0 ? (
+                            <p className="text-center text-sm text-[#9ca3af] py-8">{t('Tidak ada barang yang perlu di-restok.', 'No items need restocking.')}</p>
+                          ) : (
+                            <table className="w-full text-sm border border-[#f0ede6] rounded-lg overflow-hidden">
+                              <thead>
+                                <tr className="bg-[#f5f2eb] text-xs text-[#6b7280]">
+                                  <th className="text-left px-3 py-2">{t('Produk', 'Product')}</th>
+                                  <th className="text-center px-3 py-2">{t('Stok / Min', 'Stock / Min')}</th>
+                                  <th className="text-center px-3 py-2">{t('Qty Order', 'Order Qty')}</th>
+                                  <th className="px-2 py-2"></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {guidedItems.map(it => (
+                                  <tr key={it.product_id} className="border-t border-[#f0ede6]">
+                                    <td className="px-3 py-2">
+                                      <div className="font-medium text-[#1e3a2c]">{it.nama}</div>
+                                      <div className="text-xs text-[#9ca3af]">{it.satuan}</div>
+                                    </td>
+                                    <td className="px-3 py-2 text-center">
+                                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-600">{it.stok_total} / {it.stok_minimum}</span>
+                                    </td>
+                                    <td className="px-3 py-2 text-center">
+                                      <input type="number" min={1} value={it.qty}
+                                        onChange={e => updateGuided(it.product_id, 'qty', Math.max(1, +e.target.value))}
+                                        className="w-16 text-center border border-[#d1cdc4] rounded px-1 py-0.5 text-sm focus:outline-none focus:ring-1 focus:ring-[#1e3a2c]" />
+                                    </td>
+                                    <td className="px-2 py-2 text-center">
+                                      <button onClick={() => setGuidedItems(guidedItems.filter(x => x.product_id !== it.product_id))}
+                                        className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          )}
+                        </div>
+                      )}
+
+                      {/* STEP 2 — bagi distributor */}
+                      {guidedStep === 2 && (
+                        <div>
+                          <p className="text-sm text-[#6b7280] mb-3">{t('Sistem memilih distributor default tiap barang. Ubah bila perlu. Barang tanpa supplier akan dilewati.', 'The system picked a default distributor per item. Change if needed. Items without a supplier will be skipped.')}</p>
+                          <div className="space-y-2">
+                            {guidedItems.map(it => (
+                              <div key={it.product_id} className="flex items-center justify-between gap-3 px-3 py-2 border border-[#f0ede6] rounded-lg">
+                                <div className="min-w-0">
+                                  <div className="font-medium text-[#1e3a2c] text-sm truncate">{it.nama}</div>
+                                  <div className="text-xs text-[#9ca3af]">{it.qty} {it.satuan}</div>
+                                </div>
+                                {it.suppliers.length === 0 ? (
+                                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 shrink-0"><AlertTriangle size={13} /> {t('Belum ada supplier', 'No supplier')}</span>
+                                ) : (
+                                  <select value={it.supplier_id} onChange={e => updateGuided(it.product_id, 'supplier_id', e.target.value)}
+                                    className="border border-[#d1cdc4] rounded-lg px-2 py-1.5 text-sm max-w-[55%] focus:outline-none focus:ring-2 focus:ring-[#1e3a2c]">
+                                    {it.suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.nama_supplier}{s.jenis ? ` (${s.jenis})` : ''}</option>)}
+                                  </select>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* STEP 3 — review & buat */}
+                      {guidedStep === 3 && (() => {
+                        const valid = guidedItems.filter(i => i.supplier_id && i.qty > 0)
+                        const skipped = guidedItems.filter(i => !i.supplier_id || i.qty <= 0)
+                        const groups: Record<string, any[]> = {}
+                        valid.forEach(i => { (groups[i.supplier_id] = groups[i.supplier_id] || []).push(i) })
+                        const sids = Object.keys(groups)
+                        return (
+                          <div>
+                            <p className="text-sm text-[#6b7280] mb-3">{t('Order akan dipecah menjadi', 'The order will be split into')} <span className="font-bold text-[#1e3a2c]">{sids.length} PO</span> {t('siap kirim ke masing-masing distributor.', 'ready to send to each distributor.')}</p>
+                            <div className="space-y-3">
+                              {sids.map(sid => {
+                                const items = groups[sid]
+                                const total = items.reduce((a, b) => a + b.qty * b.harga_beli, 0)
+                                return (
+                                  <div key={sid} className="border border-[#e2ddd0] rounded-xl overflow-hidden">
+                                    <div className="flex items-center justify-between px-4 py-2.5 bg-[#f5f2eb]">
+                                      <span className="font-semibold text-[#1e3a2c] text-sm flex items-center gap-1.5"><Truck size={14} /> {supName(sid)}</span>
+                                      <span className="text-xs text-[#6b7280]">{items.length} {t('item', 'items')}</span>
+                                    </div>
+                                    <table className="w-full text-sm">
+                                      <tbody>
+                                        {items.map(it => (
+                                          <tr key={it.product_id} className="border-t border-[#f0ede6]">
+                                            <td className="px-4 py-2 text-[#1e3a2c]">{it.nama}</td>
+                                            <td className="px-2 py-2 text-center text-[#6b7280] whitespace-nowrap">{it.qty} × Rp {it.harga_beli.toLocaleString('id-ID')}</td>
+                                            <td className="px-4 py-2 text-right text-[#1e3a2c] font-medium">Rp {(it.qty * it.harga_beli).toLocaleString('id-ID')}</td>
+                                          </tr>
+                                        ))}
+                                        <tr className="border-t border-[#e2ddd0] bg-[#faf8f3]">
+                                          <td colSpan={2} className="px-4 py-2 font-semibold text-[#1e3a2c] text-xs">TOTAL</td>
+                                          <td className="px-4 py-2 text-right font-bold text-[#1e3a2c]">Rp {total.toLocaleString('id-ID')}</td>
+                                        </tr>
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            {skipped.length > 0 && (
+                              <div className="mt-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-700">
+                                <span className="font-semibold">{skipped.length} {t('barang dilewati', 'items skipped')}</span> ({t('tanpa supplier', 'no supplier')}): {skipped.map(s => s.nama).join(', ')}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })()}
+                    </div>
+
+                    {/* Footer nav */}
+                    <div className="px-6 py-4 border-t border-[#f0ede6] flex gap-3">
+                      <button onClick={() => guidedStep === 1 ? closeGuided() : setGuidedStep(guidedStep - 1)}
+                        className="flex-1 border border-[#d1cdc4] text-[#6b7280] py-2 rounded-lg text-sm hover:bg-gray-50">
+                        {guidedStep === 1 ? t('Batal', 'Cancel') : t('Kembali', 'Back')}
+                      </button>
+                      {guidedStep < 3 ? (
+                        <button onClick={() => setGuidedStep(guidedStep + 1)} disabled={guidedItems.length === 0}
+                          className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] disabled:opacity-50">
+                          {t('Lanjut', 'Next')}
+                        </button>
+                      ) : (
+                        <button onClick={submitGuided} disabled={guidedLoading}
+                          className="flex-1 bg-[#1e3a2c] text-[#e8e4d9] py-2 rounded-lg text-sm font-medium hover:bg-[#24462f] disabled:opacity-50">
+                          {guidedLoading ? t('Memproses...', 'Processing...') : t('Buat Semua PO', 'Create All POs')}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className={TBL_WRAP}>
+                <table className={TBL}>
+                  <thead className={THEAD}>
+                    <tr>
+                      <th className={TH_L}>{t('No. PO', 'PO No.')}</th>
+                      <th className={TH_L}>Supplier</th>
+                      <th className={TH_L}>{t('Tanggal', 'Date')}</th>
+                      <th className={TH_R}>Total</th>
+                      <th className={TH_C}>Status</th>
+                      <th className={TH_C}>{t('Aksi', 'Action')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3381,7 +3755,7 @@ const batalRetur = async (row: any) => {
                       <tr><td colSpan={6} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada PO — buat PO pertama', 'No POs yet — create your first PO')}</td></tr>
                     ) : (
                       poList.map((po: any) => (
-                        <tr key={po.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                        <tr key={po.id} className={TR}>
                           <td className="px-4 py-3 font-mono text-xs text-[#1e3a2c] font-medium">{po.nomor_po}</td>
                           <td className="px-4 py-3 text-[#1e3a2c]">{po.suppliers?.nama_supplier}</td>
                           <td className="px-4 py-3 text-[#6b7280]">
@@ -3486,15 +3860,15 @@ const batalRetur = async (row: any) => {
                 </div>
               )}
 
-              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Kode', 'Code')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Nama Supplier', 'Supplier Name')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Jenis', 'Type')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Telepon', 'Phone')}</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
+              <div className={TBL_WRAP}>
+                <table className={TBL}>
+                  <thead className={THEAD}>
+                    <tr>
+                      <th className={TH_L}>{t('Kode', 'Code')}</th>
+                      <th className={TH_L}>{t('Nama Supplier', 'Supplier Name')}</th>
+                      <th className={TH_L}>{t('Jenis', 'Type')}</th>
+                      <th className={TH_L}>{t('Telepon', 'Phone')}</th>
+                      <th className={TH_C}>Status</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3502,7 +3876,7 @@ const batalRetur = async (row: any) => {
                       <tr><td colSpan={5} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada supplier — tambah supplier dulu', 'No suppliers yet — add a supplier first')}</td></tr>
                     ) : (
                       suppliers.map(s => (
-                        <tr key={s.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                        <tr key={s.id} className={TR}>
                           <td className="px-4 py-3 font-mono text-xs text-[#6b7280]">{s.kode}</td>
                           <td className="px-4 py-3 font-medium text-[#1e3a2c]">{s.nama_supplier}</td>
                           <td className="px-4 py-3 text-[#6b7280]">{s.jenis}</td>
@@ -3572,17 +3946,17 @@ const batalRetur = async (row: any) => {
               )}
 
               {laporanTab === 'penjualan' && (<>
-              <div className="bg-white/70 backdrop-blur-sm border border-white/60 rounded-xl shadow-sm overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-[#f0ede6]">
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('No. Transaksi', 'Transaction No.')}</th>
-                      <th className="text-left px-4 py-3 text-[#6b7280] font-medium">{t('Waktu', 'Time')}</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">Total</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Bayar', 'Paid')}</th>
-                      <th className="text-right px-4 py-3 text-[#6b7280] font-medium">{t('Kembalian', 'Change')}</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">Status</th>
-                      <th className="text-center px-4 py-3 text-[#6b7280] font-medium">{t('Aksi', 'Action')}</th>
+              <div className={TBL_WRAP}>
+                <table className={TBL}>
+                  <thead className={THEAD}>
+                    <tr>
+                      <th className={TH_L}>{t('No. Transaksi', 'Transaction No.')}</th>
+                      <th className={TH_L}>{t('Waktu', 'Time')}</th>
+                      <th className={TH_R}>Total</th>
+                      <th className={TH_R}>{t('Bayar', 'Paid')}</th>
+                      <th className={TH_R}>{t('Kembalian', 'Change')}</th>
+                      <th className={TH_C}>Status</th>
+                      <th className={TH_C}>{t('Aksi', 'Action')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3590,7 +3964,7 @@ const batalRetur = async (row: any) => {
                       <tr><td colSpan={7} className="px-4 py-8 text-center text-[#9ca3af]">{t('Belum ada transaksi', 'No transactions yet')}</td></tr>
                     ) : (
                       riwayat.map(trx => (
-                        <tr key={trx.id} className="border-b border-[#f0ede6] hover:bg-[#faf9f6]">
+                        <tr key={trx.id} className={TR}>
                           <td className="px-4 py-3 font-mono text-xs text-[#1e3a2c] font-medium">{trx.nomor_transaksi}</td>
                           <td className="px-4 py-3 text-[#6b7280]">
                             {new Date(trx.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
