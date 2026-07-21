@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { LanguageProvider } from "../lib/i18n";
@@ -13,9 +13,43 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const SITE_URL = "https://apotek-erp.vercel.app";
+const TITLE = "Seawise Enterprise Apps — Pharmacy Store Edition";
+const DESCRIPTION =
+  "Sistem manajemen apotek: dashboard analitik real-time, kasir & resep, stok & kadaluarsa, order terpandu, pembayaran faktur, hingga laporan SIPNAP — dalam satu aplikasi.";
+
 export const metadata: Metadata = {
-  title: "Seawise Enterprise Apps — Pharmacy Store Edition",
-  description: "Sistem manajemen apotek: stok, transaksi, pembelian, dan laporan dalam satu platform.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: TITLE,
+    template: "%s — Seawise Enterprise Apps",
+  },
+  description: DESCRIPTION,
+  applicationName: "Seawise Enterprise Apps",
+  keywords: [
+    "aplikasi apotek", "software apotek", "ERP apotek", "sistem manajemen apotek",
+    "POS apotek", "laporan SIPNAP", "stok obat", "kadaluarsa obat", "pharmacy management system",
+  ],
+  authors: [{ name: "Seawise Creative" }],
+  creator: "Seawise Creative",
+  openGraph: {
+    type: "website",
+    locale: "id_ID",
+    url: SITE_URL,
+    siteName: "Seawise Enterprise Apps",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
+  robots: { index: true, follow: true },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#1e3a2c",
 };
 
 export default function RootLayout({
