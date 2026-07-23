@@ -6,7 +6,7 @@ import {
   FlaskConical, Wallet, CalendarClock, ClipboardList, Printer, Pencil,
   Receipt, CreditCard, Building2, Users, PanelLeftClose, PanelLeft, ChevronRight,
   UserPlus, Trash2, Upload, ShieldCheck, Check, ArrowLeft, Menu, X, Download, Database, HeartPulse,
-  Search, Wand2, AlertTriangle
+  Search, Wand2, AlertTriangle, LayoutGrid
 } from 'lucide-react'
 import { supabase, createSignupClient } from '../../lib/supabase'
 import { AMBIENT } from '../../lib/theme'
@@ -134,6 +134,7 @@ export default function Dashboard() {
   const [batchSupplier, setBatchSupplier] = useState<any>(null)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
   const [currentRole, setCurrentRole] = useState<string | null>(null)
   const [currentModules, setCurrentModules] = useState<string[] | null>(null)
   const [isSuper, setIsSuper] = useState(false)
@@ -2519,7 +2520,7 @@ const batalRetur = async (row: any) => {
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 min-w-0 p-4 md:p-8">
+        <div className="flex-1 min-w-0 p-4 md:p-8 pb-24 md:pb-8">
 
           {/* COMPANIES (super admin) */}
           {activePage === 'companies' && isSuper && (
@@ -4677,6 +4678,69 @@ const batalRetur = async (row: any) => {
 
         </div>
         </div>
+
+        {/* Bottom tab bar (mobile) + More sheet */}
+        {(() => {
+          const navAll = menuItems.filter(i => allowedPages.includes(i.id))
+          const navMain = navAll.slice(0, 4)
+          const superExtra = (isSuper && allowedPages.includes('companies')) ? [{ id: 'companies', label: 'Companies', en: 'Companies', icon: Building2 }] : []
+          const moreList = [...navAll.slice(4), ...superExtra]
+          const short = (it: any) => (lang === 'en' ? it.en : it.label).split(/[ &\/]/)[0]
+          const moreActive = moreList.some(m => m.id === activePage)
+          return (
+            <>
+              <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur border-t border-[#e6e2d8] flex" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                {navMain.map(item => {
+                  const Icon = item.icon; const active = activePage === item.id
+                  return (
+                    <button key={item.id} onClick={() => setActivePage(item.id)}
+                      className={`flex-1 flex flex-col items-center justify-center gap-1 py-2 ${active ? 'text-[#1e3a2c]' : 'text-[#9ca3af]'}`}>
+                      <span className={`flex items-center justify-center w-10 h-6 rounded-full ${active ? 'bg-[#1e3a2c]/10' : ''}`}><Icon size={19} /></span>
+                      <span className="text-[10px] font-medium leading-none">{short(item)}</span>
+                    </button>
+                  )
+                })}
+                {moreList.length > 0 && (
+                  <button onClick={() => setMoreOpen(true)}
+                    className={`flex-1 flex flex-col items-center justify-center gap-1 py-2 ${moreActive || moreOpen ? 'text-[#1e3a2c]' : 'text-[#9ca3af]'}`}>
+                    <span className={`flex items-center justify-center w-10 h-6 rounded-full ${moreActive || moreOpen ? 'bg-[#1e3a2c]/10' : ''}`}><LayoutGrid size={19} /></span>
+                    <span className="text-[10px] font-medium leading-none">{t('Lainnya', 'More')}</span>
+                  </button>
+                )}
+              </nav>
+
+              {moreOpen && (
+                <div className="md:hidden fixed inset-0 z-50">
+                  <div className="absolute inset-0 bg-black/40" onClick={() => setMoreOpen(false)} />
+                  <div className="absolute bottom-0 inset-x-0 bg-white rounded-t-3xl p-4 sw-sheet" style={{ paddingBottom: 'calc(1.25rem + env(safe-area-inset-bottom))' }}>
+                    <div className="w-10 h-1 rounded-full bg-[#d8d2c4] mx-auto mb-3" />
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm font-semibold text-[#1c2620]">{t('Menu Lainnya', 'More Menu')}</p>
+                      <button onClick={() => setMoreOpen(false)} className="text-[#9ca3af] hover:text-[#1c2620]" aria-label="Tutup"><X size={18} /></button>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2">
+                      {moreList.map(item => {
+                        const Icon = item.icon; const active = activePage === item.id
+                        return (
+                          <button key={item.id} onClick={() => { setActivePage(item.id); setMoreOpen(false) }}
+                            className={`flex flex-col items-center gap-1.5 py-3 rounded-2xl border transition ${active ? 'border-[#1e3a2c] bg-[#f5f2eb] text-[#1e3a2c]' : 'border-[#eceae3] text-[#4b5563]'}`}>
+                            <Icon size={20} />
+                            <span className="text-[10px] font-medium text-center leading-tight px-0.5">{lang === 'en' ? item.en : item.label}</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <div className="flex items-center justify-between border-t border-[#f0ede6] mt-4 pt-3">
+                      <LangToggle />
+                      <button onClick={async () => { await supabase.auth.signOut(); window.location.href = '/' }}
+                        className="inline-flex items-center gap-1.5 text-sm text-red-500 font-medium"><LogOut size={15} /> {t('Keluar', 'Sign out')}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        })()}
       </div>
     </>
   )
