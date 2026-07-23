@@ -3060,52 +3060,55 @@ const batalRetur = async (row: any) => {
 
               {/* Alert Expired */}
               {expiredAlerts.length > 0 && (
-                <div className="mb-6 space-y-2">
+                <div className="mb-6 space-y-3">
                   {(() => {
-                    const today = new Date()
-                    const in30 = new Date(); in30.setDate(today.getDate() + 30)
+                    const today0 = new Date(); today0.setHours(0, 0, 0, 0)
+                    const in30 = new Date(today0); in30.setDate(today0.getDate() + 30)
                     const merah = expiredAlerts.filter(b => new Date(b.expired_date) <= in30)
                     const kuning = expiredAlerts.filter(b => new Date(b.expired_date) > in30)
-                    return (
-                      <>
-                        {merah.length > 0 && (
-                          <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="text-red-600 font-semibold text-sm">🚨 Expired dalam 30 hari ({merah.length} batch)</span>
-                            </div>
-                            <div className="space-y-1">
-                              {merah.map((b: any, i: number) => (
-                                <div key={i} className="flex justify-between text-xs text-red-700">
-                                  <span className="font-medium">{b.products?.nama_obat} · Batch: {b.batch_number || '-'}</span>
-                                  <div className="flex items-center gap-3">
-  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
-  <button onClick={() => { setShowProdukDetail(b.products); openTindakLanjut(b) }} className="px-2 py-0.5 bg-red-600 text-white rounded text-xs font-medium whitespace-nowrap">Tindak Lanjut</button>
-</div>
+                    const groups = [
+                      { items: merah, tone: 'red', Icon: AlertTriangle,
+                        wrap: 'bg-red-50 border-red-200', title: t('Segera Kadaluarsa', 'Expiring Soon'), sub: `≤30 ${t('hari', 'days')}`,
+                        titleCls: 'text-red-700', badgeCls: 'bg-red-100 text-red-700', card: 'border-red-100',
+                        dayCls: 'text-red-600', btn: 'bg-red-600 hover:bg-red-700' },
+                      { items: kuning, tone: 'amber', Icon: CalendarClock,
+                        wrap: 'bg-amber-50 border-amber-200', title: t('Perlu Perhatian', 'Needs Attention'), sub: `31–60 ${t('hari', 'days')}`,
+                        titleCls: 'text-amber-800', badgeCls: 'bg-amber-100 text-amber-800', card: 'border-amber-100',
+                        dayCls: 'text-amber-700', btn: 'bg-amber-600 hover:bg-amber-700' },
+                    ]
+                    return groups.filter(g => g.items.length > 0).map((g, gi) => (
+                      <div key={gi} className={`border rounded-2xl p-3 sm:p-4 ${g.wrap}`}>
+                        <div className="flex items-center gap-2 mb-3">
+                          <g.Icon size={17} className={g.titleCls} />
+                          <span className={`font-semibold text-sm ${g.titleCls}`}>{g.title}</span>
+                          <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${g.badgeCls}`}>{g.items.length} {t('batch', 'batches')} · {g.sub}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {g.items.map((b: any, i: number) => {
+                            const days = Math.ceil((new Date(b.expired_date).getTime() - today0.getTime()) / 86400000)
+                            const exp = new Date(b.expired_date).toLocaleDateString(lang === 'en' ? 'en-US' : 'id-ID', { day: 'numeric', month: 'short', year: 'numeric' })
+                            return (
+                              <div key={i} className={`flex items-center gap-3 bg-white rounded-xl border px-3 py-2.5 ${g.card}`}>
+                                <div className="shrink-0 w-12 text-center">
+                                  <div className={`text-base font-bold leading-none ${g.dayCls}`}>{days < 0 ? '!' : days}</div>
+                                  <div className="text-[9px] text-[#9ca3af] mt-0.5 leading-none">{days < 0 ? t('lewat', 'past') : t('hari lagi', 'days left')}</div>
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {kuning.length > 0 && (
-                          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="text-yellow-700 font-semibold text-sm">⚠️ Expired dalam 31-60 hari ({kuning.length} batch)</span>
-                            </div>
-                            <div className="space-y-1">
-                              {kuning.map((b: any, i: number) => (
-                                <div key={i} className="flex justify-between text-xs text-yellow-700">
-                                  <span className="font-medium">{b.products?.nama_obat} · Batch: {b.batch_number || '-'}</span>
-                                  <div className="flex items-center gap-3">
-  <span>Exp: {new Date(b.expired_date).toLocaleDateString('id-ID', {day:'numeric',month:'short',year:'numeric'})} · Stok: {b.stok_batch}</span>
-  <button onClick={() => { setShowProdukDetail(b.products); openTindakLanjut(b) }} className="px-2 py-0.5 bg-red-600 text-white rounded text-xs font-medium whitespace-nowrap">Tindak Lanjut</button>
-</div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="font-medium text-[#1c2620] text-sm leading-tight truncate">{b.products?.nama_obat || '-'}</p>
+                                  <p className="text-[11px] text-[#6b7280] leading-tight mt-0.5">
+                                    <span className="font-mono">{b.batch_number || '-'}</span> · {t('Exp', 'Exp')} {exp} · {t('Stok', 'Stock')} {b.stok_batch}
+                                  </p>
                                 </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    )
+                                <button onClick={() => { setShowProdukDetail(b.products); openTindakLanjut(b) }}
+                                  className={`shrink-0 px-3 py-1.5 rounded-lg text-white text-xs font-medium transition ${g.btn}`}>
+                                  {t('Tindak Lanjut', 'Follow up')}
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))
                   })()}
                 </div>
               )}
