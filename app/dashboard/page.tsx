@@ -2590,20 +2590,22 @@ const batalRetur = async (row: any) => {
               <p className="text-[#6b7280] text-sm mb-8">
                 {t('Halo', 'Hello')}, <span className="font-semibold text-[#1c2620]">{settingsData.nama_apoteker || t('Apoteker', 'Pharmacist')}</span> 👋 — {t('ringkasan aktivitas apotek hari ini', "today's pharmacy activity summary")}
               </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-5">
                 {[
                   { label: t('Total Produk', 'Total Products'), value: statProduk, desc: t('Item terdaftar', 'Registered items'), Icon: Pill, chip: 'bg-[#dce5db] text-[#2f5741]' },
                   { label: t('Transaksi Hari Ini', 'Sales Today'), value: statTrxHariIni, desc: t('Penjualan hari ini', "Today's sales"), Icon: ShoppingCart, chip: 'bg-[#dce5db] text-[#2f5741]' },
                   { label: t('Expired ≤ 60 Hari', 'Expiring ≤ 60 Days'), value: statExpired, desc: t('Batch mendekati / lewat exp', 'Batches near / past expiry'), Icon: CalendarClock, chip: 'bg-[#f5e6c8] text-[#8a6d1f]' },
                   { label: t('Omzet Hari Ini', 'Revenue Today'), value: `Rp ${statOmzet.toLocaleString('id-ID')}`, desc: t('Total penjualan', 'Total sales'), Icon: Wallet, chip: 'bg-[#f0dcd2] text-[#a75a34]' },
                 ].map((s, i) => (
-                  <div key={i} className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-5">
-                    <div className={`w-11 h-11 rounded-xl flex items-center justify-center mb-4 ${s.chip}`}>
-                      <s.Icon size={20} strokeWidth={1.9} />
+                  <div key={i} className="bg-white/70 backdrop-blur-sm border border-white/60 shadow-sm rounded-2xl p-4 sm:p-5 flex flex-col aspect-square xl:aspect-auto">
+                    <div className={`w-10 h-10 sm:w-11 sm:h-11 rounded-xl flex items-center justify-center ${s.chip}`}>
+                      <s.Icon size={19} strokeWidth={1.9} />
                     </div>
-                    <p className="text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1.5">{s.label}</p>
-                    <p className="text-2xl font-bold text-[#1c2620] leading-none">{s.value}</p>
-                    <p className="text-xs text-[#9ca3af] mt-2">{s.desc}</p>
+                    <div className="mt-auto pt-3">
+                      <p className="text-[10.5px] sm:text-xs text-[#6b7280] font-medium uppercase tracking-wide mb-1 leading-tight">{s.label}</p>
+                      <p className="text-xl sm:text-2xl font-bold text-[#1c2620] leading-tight break-words">{s.value}</p>
+                      <p className="text-[11px] text-[#9ca3af] mt-1.5 leading-tight">{s.desc}</p>
+                    </div>
                   </div>
                 ))}
               </div>
